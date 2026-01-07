@@ -1,0 +1,21 @@
+name: quick_html_pdf_example
+description: Example app demonstrating QuickHtmlPdf usage.
+publish_to: 'none'
+
+environment:
+  sdk: ^3.8.1
+
+dependencies:
+  flutter:
+    sdk: flutter
+  quick_html_pdf:
+    path: ../
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^5.0.0
+
+flutter:
+  uses-material-design: true
+
