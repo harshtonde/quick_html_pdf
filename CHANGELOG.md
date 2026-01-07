@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.0.2
+
+- Add repository metadata
+
 ## 1.0.1
 
 - Documentation improvements
