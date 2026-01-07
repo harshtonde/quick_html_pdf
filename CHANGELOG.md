@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.0.1
+
+- Documentation improvements
+
 ## 1.0.0
 
 Initial release of QuickHtmlPdf - a fast HTML to PDF conversion package for Flutter Web.
