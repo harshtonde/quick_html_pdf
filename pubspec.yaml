@@ -1,6 +1,6 @@
 name: quick_html_pdf
 description: A fast, high-performance Flutter Web package for converting HTML templates with dynamic data into PDFs using JavaScript interoperability.
-version: 1.0.2
+version: 1.0.3
 repository: https://github.com/harshtonde/quick_html_pdf.git
 homepage: https://github.com/harshtonde/quick_html_pdf
 issue_tracker: https://github.com/harshtonde/quick_html_pdf/issues
@@ -21,6 +21,10 @@ dev_dependencies:
 
 platforms:
   web:
+
+executables:
+  add_scripts:
+    # Usage: dart run quick_html_pdf:add_scripts [path/to/index.html]
 
 topics:
   - pdf

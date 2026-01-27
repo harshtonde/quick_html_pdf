@@ -23,7 +23,21 @@ dependencies:
 
 ### Required: Add JS Libraries (for Bytes Mode)
 
-If you plan to use `PdfOutput.bytes`, add these scripts to your `web/index.html`:
+If you plan to use `PdfOutput.bytes`, you need to add html2canvas and jsPDF scripts to your `web/index.html`.
+
+**Option 1: Use the CLI tool (recommended)**
+
+```bash
+dart run quick_html_pdf:add_scripts
+```
+
+This automatically adds the required scripts to `web/index.html`. You can also specify a custom path:
+
+```bash
+dart run quick_html_pdf:add_scripts path/to/index.html
+```
+
+**Option 2: Add manually**
 
 ```html
 <head>

@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.0.4
+
+- Add CLI tool to automatically add required JS scripts to index.html
+  - Usage: `dart run quick_html_pdf:add_scripts [path/to/index.html]`
+  - Automatically detects and skips if scripts already present
+
+## 1.0.3
+
+- Fix JavaScript ArrayBuffer to Dart Uint8List conversion in bytes mode
+  - jsPDF's `output('arraybuffer')` returns a JS ArrayBuffer, not Uint8Array
+  - Properly convert using `JSArrayBuffer.toDart.asUint8List()`
+
 ## 1.0.2
 
 - Add repository metadata

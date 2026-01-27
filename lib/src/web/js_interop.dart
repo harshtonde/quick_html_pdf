@@ -48,7 +48,7 @@ extension JsPDFExtension on JsPDF {
   external void _addPage([JSString? format, JSString? orientation]);
 
   @JS('output')
-  external JSUint8Array _output(JSString type);
+  external JSAny _output(JSString type);
 
   @JS('save')
   external void _save(JSString filename);
@@ -81,9 +81,27 @@ extension JsPDFExtension on JsPDF {
   }
 
   /// Get PDF as Uint8List.
+  ///
+  /// jsPDF's output('arraybuffer') returns a JavaScript ArrayBuffer,
+  /// which needs to be converted to a Dart Uint8List.
   Uint8List getBytes() {
-    final jsArray = _output('arraybuffer'.toJS);
-    return jsArray.toDart;
+    final jsResult = _output('arraybuffer'.toJS);
+
+    // jsPDF returns a JavaScript ArrayBuffer, not a Uint8Array
+    // We need to convert it properly to Dart Uint8List
+    if (jsResult.typeofEquals('object')) {
+      final JSArrayBuffer arrayBuffer = jsResult as JSArrayBuffer;
+      return arrayBuffer.toDart.asUint8List();
+    }
+
+    // Fallback: if it's somehow already a Uint8Array
+    if (jsResult is JSUint8Array) {
+      return jsResult.toDart;
+    }
+
+    throw StateError(
+      'Unexpected return type from jsPDF.output(): ${jsResult.runtimeType}',
+    );
   }
 
   /// Save PDF to file (triggers download).
