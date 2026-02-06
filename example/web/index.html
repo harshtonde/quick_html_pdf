@@ -1,5 +1,6 @@
 <!DOCTYPE html>
 <html>
+
 <head>
   <base href="$FLUTTER_BASE_HREF">
   <meta charset="UTF-8">
@@ -9,33 +10,46 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="black">
   <meta name="apple-mobile-web-app-title" content="QuickHtmlPdf">
   <link rel="apple-touch-icon" href="icons/Icon-192.png">
-  <link rel="icon" type="image/png" href="favicon.png"/>
+  <link rel="icon" type="image/png" href="favicon.png" />
   <title>QuickHtmlPdf Example</title>
   <link rel="manifest" href="manifest.json">
 
   <!-- Required JS libraries for bytes mode -->
   <!-- Only needed if you use PdfOutput.bytes -->
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+  
+  <!-- Option 1: html2pdf.js (RECOMMENDED - includes intelligent page breaks) -->
+  <!-- This bundle includes html2canvas and jsPDF -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
+  
+  <!-- Option 2: Fallback libraries (used if html2pdf.js is not available) -->
+  <!-- Uncomment these if you need the legacy behavior without intelligent page breaks -->
+  <!-- <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script> -->
+  <!-- <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script> -->
 
   <script>
     // Verify libraries loaded
-    window.addEventListener('load', function() {
-      if (typeof html2canvas !== 'undefined') {
-        console.log('✓ html2canvas loaded');
+    window.addEventListener('load', function () {
+      if (typeof html2pdf !== 'undefined') {
+        console.log('✓ html2pdf.js loaded (includes html2canvas + jsPDF)');
       } else {
-        console.error('✗ html2canvas not loaded');
-      }
-      if (typeof jspdf !== 'undefined') {
-        console.log('✓ jsPDF loaded');
-      } else {
-        console.error('✗ jsPDF not loaded');
+        console.warn('✗ html2pdf.js not loaded, checking fallback libraries...');
+        if (typeof html2canvas !== 'undefined') {
+          console.log('✓ html2canvas loaded (fallback)');
+        } else {
+          console.error('✗ html2canvas not loaded');
+        }
+        if (typeof jspdf !== 'undefined') {
+          console.log('✓ jsPDF loaded (fallback)');
+        } else {
+          console.error('✗ jsPDF not loaded');
+        }
       }
     });
   </script>
 </head>
+
 <body>
   <script src="flutter_bootstrap.js" async></script>
 </body>
-</html>
 
+</html>

@@ -1,16 +1,63 @@
 # Changelog
 
-## 1.0.4
+## 2.0.1
 
-- Add CLI tool to automatically add required JS scripts to index.html
-  - Usage: `dart run quick_html_pdf:add_scripts [path/to/index.html]`
-  - Automatically detects and skips if scripts already present
+### Bug Fixes
 
-## 1.0.3
+- **Fixed NativeByteBuffer to Uint8List conversion error**
+  - `jsPDF.output('arraybuffer')` returns JavaScript `ArrayBuffer`, not `Uint8Array`
+  - Fixed conversion: `JSArrayBuffer` → `ByteBuffer` → `Uint8List` using `.toDart.asUint8List()`
+  - Resolved `TypeError: type 'NativeByteBuffer' is not a subtype of type 'NativeUint8List'`
 
-- Fix JavaScript ArrayBuffer to Dart Uint8List conversion in bytes mode
-  - jsPDF's `output('arraybuffer')` returns a JS ArrayBuffer, not Uint8Array
-  - Properly convert using `JSArrayBuffer.toDart.asUint8List()`
+- **Fixed Unicode/Hindi text not rendering in headers and footers**
+  - Previous implementation used `pdf.text()` which relies on jsPDF's built-in fonts (Helvetica, Times, Courier) without Unicode support
+  - Now renders headers/footers using html2canvas (same as main content)
+  - Browser's font rendering engine properly handles Hindi, Chinese, Arabic, and all Unicode characters
+  - Added 'Noto Sans Devanagari' to default font stack for Hindi support
+
+### Improvements
+
+- Headers and footers now use the same rendering pipeline as main content for consistent output
+- Temporary DOM elements used for header/footer rendering are properly cleaned up
+
+## 2.0.0
+
+### New Features
+
+- **Intelligent Page Breaks for Bytes Mode**
+  - Integrated html2pdf.js for smart content splitting
+  - Respects CSS `page-break-inside: avoid` on elements
+  - Respects CSS `page-break-before: always` and `page-break-after: always`
+  - Respects `orphans` and `widows` CSS properties
+  - Finds natural break points between block elements
+  - Falls back to legacy html2canvas + jsPDF if html2pdf.js is not available
+  - Configurable `pageBreakModes` option: `css`, `avoidAll`, `legacy`
+
+- **Headers/Footers with Dynamic Page Numbers**
+  - `{{page}}` placeholder replaced with current page number (1, 2, 3...)
+  - `{{pages}}` placeholder replaced with total page count
+  - `{{date}}` placeholder for current date
+  - `{{time}}` placeholder for current time
+  - `{{datetime}}` placeholder for date and time
+  - Headers/footers render on every page at consistent positions
+  - Configurable `headerHeightMm` and `footerHeightMm`
+  - Configurable `headerFontSize` and `footerFontSize`
+  - Optional separator lines with `showHeaderLine` and `showFooterLine`
+  - Content area automatically adjusted for header/footer space
+
+### Breaking Changes
+
+- Bytes mode now requires html2pdf.js for intelligent page breaks (recommended)
+- Update your `web/index.html` to use the new script:
+  ```html
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
+  ```
+
+### Improvements
+
+- Added utility CSS classes: `.page-break-before`, `.keep-with-next`
+- Cards, sections, and invoice items now have `page-break-inside: avoid` by default
+- Better orphan/widow handling for paragraphs and list items
 
 ## 1.0.2
 

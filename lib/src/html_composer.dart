@@ -1,7 +1,7 @@
 /// HTML composition with print CSS for QuickHtmlPdf.
 ///
 /// Builds a complete HTML document with proper print styles
-/// for accurate PDF generation.
+/// and CSS page-break properties for accurate PDF generation.
 library;
 
 import 'options.dart';
@@ -12,22 +12,27 @@ class HtmlComposer {
   ///
   /// [bodyContent] - The rendered HTML body content
   /// [options] - PDF options including page format, margins, header/footer
+  ///
+  /// The generated HTML includes:
+  /// - CSS page-break properties for intelligent content splitting
+  /// - Utility classes for manual page break control
+  /// - Proper handling for tables, images, and headings
+  /// - Support for html2pdf.js page break modes
   static String compose(String bodyContent, PdfOptions options) {
     final pageSize = _getPageSizeCSS(options);
     final margins = options.margins.toCss();
 
-    // Calculate header/footer heights for content padding
-    final hasHeader =
-        options.headerHtml != null && options.headerHtml!.isNotEmpty;
-    final hasFooter =
-        options.footerHtml != null && options.footerHtml!.isNotEmpty;
+    // For bytes mode (html2pdf.js), headers/footers are added as overlays
+    // after PDF generation, so we don't add padding in the HTML.
+    // For download mode, headers/footers use fixed CSS positioning.
+    final useFixedHeaders = options.output == PdfOutput.download;
 
-    // Estimate header/footer heights (can be customized)
-    const headerHeight = 25; // mm
-    const footerHeight = 20; // mm
+    // Estimate header/footer heights for fixed positioning mode
+    final headerHeight = options.headerHeightMm.round();
+    final footerHeight = options.footerHeightMm.round();
 
-    final contentPaddingTop = hasHeader ? headerHeight : 0;
-    final contentPaddingBottom = hasFooter ? footerHeight : 0;
+    final contentPaddingTop = (useFixedHeaders && options.hasHeader) ? headerHeight : 0;
+    final contentPaddingBottom = (useFixedHeaders && options.hasFooter) ? footerHeight : 0;
 
     return '''
 <!DOCTYPE html>
@@ -97,10 +102,14 @@ class HtmlComposer {
         break-after: avoid;
       }
       
-      /* Page break utilities */
-      .page-break {
+      /* Page break utilities - for both CSS and html2pdf.js */
+      .page-break, .html2pdf__page-break {
         break-after: page;
         page-break-after: always;
+        display: block;
+        height: 0;
+        margin: 0;
+        padding: 0;
       }
       
       .page-break-before {
@@ -108,7 +117,7 @@ class HtmlComposer {
         page-break-before: always;
       }
       
-      .no-break {
+      .no-break, [data-html2pdf-page-break="avoid"] {
         break-inside: avoid;
         page-break-inside: avoid;
       }
@@ -119,8 +128,43 @@ class HtmlComposer {
         break-inside: avoid;
       }
       
-${hasHeader ? _generateHeaderCSS(headerHeight, options.margins) : ''}
-${hasFooter ? _generateFooterCSS(footerHeight, options.margins) : ''}
+      /* Orphans and widows control */
+      p, li {
+        orphans: 3;
+        widows: 3;
+      }
+      
+${(useFixedHeaders && options.hasHeader) ? _generateHeaderCSS(headerHeight, options.margins) : ''}
+${(useFixedHeaders && options.hasFooter) ? _generateFooterCSS(footerHeight, options.margins) : ''}
+    }
+    
+    /* ========================================
+       CSS Page Break Properties
+       (Respected by both browser print and html2pdf.js)
+       ======================================== */
+    
+    /* Force page break after an element */
+    .page-break, .html2pdf__page-break {
+      break-after: page;
+      page-break-after: always;
+    }
+    
+    /* Force page break before an element */
+    .page-break-before {
+      break-before: page;
+      page-break-before: always;
+    }
+    
+    /* Avoid page break inside an element */
+    .no-break {
+      break-inside: avoid;
+      page-break-inside: avoid;
+    }
+    
+    /* Keep element with the next element */
+    .keep-with-next {
+      break-after: avoid;
+      page-break-after: avoid;
     }
     
     /* Screen preview styles (for iframe rendering) */
@@ -166,14 +210,26 @@ ${hasFooter ? _generateFooterCSS(footerHeight, options.margins) : ''}
     tbody tr:hover {
       background-color: #fafafa;
     }
+    
+    /* Card/section styling with avoid break */
+    .card, .section, .panel {
+      page-break-inside: avoid;
+      break-inside: avoid;
+    }
+    
+    /* Invoice/report specific - keep items together */
+    .invoice-item, .report-row, .data-row {
+      page-break-inside: avoid;
+      break-inside: avoid;
+    }
   </style>
 </head>
 <body>
-${hasHeader ? _generateHeaderHTML(options.headerHtml!) : ''}
+${(useFixedHeaders && options.hasHeader) ? _generateHeaderHTML(options.headerHtml!) : ''}
 <div class="pdf-content">
 $bodyContent
 </div>
-${hasFooter ? _generateFooterHTML(options.footerHtml!) : ''}
+${(useFixedHeaders && options.hasFooter) ? _generateFooterHTML(options.footerHtml!) : ''}
 </body>
 </html>
 ''';

@@ -6,10 +6,11 @@ A fast, high-performance Flutter Web package for converting HTML templates with 
 
 - **Instant Download Mode**: Uses native browser print for near-instant PDF generation (~50ms)
 - **Bytes Mode**: Returns PDF as `Uint8List` for further processing (upload, store, etc.)
+- **Intelligent Page Breaks**: Respects CSS `page-break-inside: avoid`, `page-break-before/after: always`
+- **Dynamic Headers/Footers**: Custom headers and footers with `{{page}}` and `{{pages}}` placeholders
 - **Template Engine**: Support for `{{placeholders}}`, loops, and raw HTML insertion
 - **Print CSS**: Optimized CSS for accurate pagination and table handling
-- **Large Documents**: Chunked rendering for 200+ page documents
-- **Header/Footer**: Custom header and footer support for each page
+- **Large Documents**: Efficient rendering for 200+ page documents
 - **Multiple Formats**: A4, Letter, Legal with portrait/landscape orientation
 
 ## Installation
@@ -23,30 +24,24 @@ dependencies:
 
 ### Required: Add JS Libraries (for Bytes Mode)
 
-If you plan to use `PdfOutput.bytes`, you need to add html2canvas and jsPDF scripts to your `web/index.html`.
-
-**Option 1: Use the CLI tool (recommended)**
-
-```bash
-dart run quick_html_pdf:add_scripts
-```
-
-This automatically adds the required scripts to `web/index.html`. You can also specify a custom path:
-
-```bash
-dart run quick_html_pdf:add_scripts path/to/index.html
-```
-
-**Option 2: Add manually**
+If you plan to use `PdfOutput.bytes`, add the html2pdf.js script to your `web/index.html`:
 
 ```html
 <head>
   <!-- ... other head content ... -->
 
-  <!-- Required for bytes mode only -->
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+  <!-- RECOMMENDED: html2pdf.js for intelligent page breaks -->
+  <!-- This bundle includes html2canvas and jsPDF -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
 </head>
+```
+
+**Note:** html2pdf.js provides intelligent page breaks that respect CSS `page-break` properties. If you don't need intelligent page breaks, you can use the legacy libraries instead:
+
+```html
+<!-- Legacy option (without intelligent page breaks) -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 ```
 
 **Note:** These libraries are NOT required for `PdfOutput.download` mode, which uses the browser's native print dialog.
@@ -203,11 +198,20 @@ PdfOptions(
   // Filename for download
   filename: 'document.pdf',
 
-  // Optional header HTML (appears on each page)
-  headerHtml: '<div>Company Name</div>',
+  // Header with dynamic placeholders (appears on each page)
+  headerHtml: 'Document Title | Page {{page}} of {{pages}}',
+  headerHeightMm: 15,     // Height of header area
+  headerFontSize: 10,     // Font size in points
+  showHeaderLine: true,   // Draw separator line below header
 
-  // Optional footer HTML (appears on each page)
-  footerHtml: '<div>Page footer</div>',
+  // Footer with dynamic placeholders (appears on each page)
+  footerHtml: 'Confidential | Generated on {{date}}',
+  footerHeightMm: 15,     // Height of footer area
+  footerFontSize: 9,      // Font size in points
+  showFooterLine: true,   // Draw separator line above footer
+
+  // Page break modes for intelligent content splitting (bytes mode)
+  pageBreakModes: [PageBreakMode.css, PageBreakMode.avoidAll],
 
   // Debug logging
   debug: false,
@@ -220,6 +224,26 @@ PdfOptions(
 
   // Advanced: Resource loading timeout
   resourceTimeoutMs: 10000,
+)
+```
+
+### Header/Footer Placeholders
+
+The following placeholders are supported in `headerHtml` and `footerHtml`:
+
+| Placeholder | Description | Example Output |
+| ----------- | ----------- | -------------- |
+| `{{page}}` | Current page number | 1, 2, 3... |
+| `{{pages}}` | Total page count | 10 |
+| `{{date}}` | Current date (YYYY-MM-DD) | 2024-01-08 |
+| `{{time}}` | Current time (HH:MM) | 14:30 |
+| `{{datetime}}` | Date and time | 2024-01-08 14:30 |
+
+Example:
+```dart
+PdfOptions(
+  headerHtml: 'Annual Report 2024 | Page {{page}} of {{pages}}',
+  footerHtml: 'Confidential | Generated: {{datetime}}',
 )
 ```
 
@@ -389,17 +413,62 @@ Download mode leverages the browser's native PDF engine, while bytes mode must r
 </table>
 ```
 
-### Use Page Breaks Strategically
+### Intelligent Page Breaks (Bytes Mode)
+
+When using `PdfOutput.bytes` with html2pdf.js, the package respects CSS page-break properties:
 
 ```html
 <!-- Force page break after a section -->
 <div class="page-break"></div>
 
-<!-- Keep content together -->
+<!-- Force page break before a section -->
+<div class="page-break-before">New Chapter</div>
+
+<!-- Keep content together (avoid breaking inside) -->
 <div class="no-break">
   <h2>Section Title</h2>
   <p>This content stays together</p>
 </div>
+
+<!-- Keep heading with following content -->
+<h2 class="keep-with-next">Important Section</h2>
+<p>This paragraph stays with the heading above</p>
+```
+
+You can also use CSS page-break properties directly:
+
+```html
+<style>
+  .card {
+    page-break-inside: avoid;  /* Don't break inside cards */
+  }
+  
+  .chapter {
+    page-break-before: always; /* Start each chapter on new page */
+  }
+  
+  h2, h3 {
+    page-break-after: avoid;   /* Keep heading with content */
+  }
+  
+  p {
+    orphans: 3;                /* Minimum lines at end of page */
+    widows: 3;                 /* Minimum lines at start of page */
+  }
+</style>
+```
+
+Configure page break modes in options:
+
+```dart
+PdfOptions(
+  output: PdfOutput.bytes,
+  pageBreakModes: [
+    PageBreakMode.css,      // Respect CSS page-break properties
+    PageBreakMode.avoidAll, // Avoid breaking common elements
+    PageBreakMode.legacy,   // Legacy mode for compatibility
+  ],
+)
 ```
 
 ### Reduce Image Quality for Bytes Mode
