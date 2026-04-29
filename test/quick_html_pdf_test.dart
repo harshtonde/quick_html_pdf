@@ -27,7 +27,6 @@ void main() {
       final result = TemplateEngine.render('<p>{{text}}</p>', {
         'text': '<script>alert("xss")</script>',
       });
-      // HtmlEscapeMode.element escapes < > & but not quotes (which are safe in element content)
       expect(result, '<p>&lt;script&gt;alert("xss")&lt;/script&gt;</p>');
     });
 
@@ -93,13 +92,21 @@ void main() {
   });
 
   group('PdfOptions', () {
-    test('has correct default values', () {
+    test('has correct default values (v3: print mode is the default)', () {
       const options = PdfOptions();
       expect(options.pageFormat, PdfPageFormat.a4);
       expect(options.orientation, PdfOrientation.portrait);
-      expect(options.output, PdfOutput.download);
+      expect(options.output, PdfOutput.print);
       expect(options.filename, 'document.pdf');
       expect(options.debug, false);
+      expect(options.fonts, isEmpty);
+    });
+
+    test('exposes three output modes', () {
+      expect(PdfOutput.values, hasLength(3));
+      expect(PdfOutput.values, contains(PdfOutput.print));
+      expect(PdfOutput.values, contains(PdfOutput.download));
+      expect(PdfOutput.values, contains(PdfOutput.bytes));
     });
 
     test('calculates effective dimensions for portrait', () {
@@ -127,6 +134,24 @@ void main() {
       expect(original.filename, 'original.pdf');
       expect(copy.filename, 'copy.pdf');
       expect(copy.pageFormat, original.pageFormat);
+    });
+
+    test('copyWith preserves fonts', () {
+      const fontA = PdfFont(family: 'A', src: 'a.ttf');
+      const fontB = PdfFont(family: 'B', src: 'b.ttf');
+      const original = PdfOptions(fonts: [fontA]);
+      final copy = original.copyWith(fonts: [fontA, fontB]);
+      expect(copy.fonts.map((f) => f.family), ['A', 'B']);
+    });
+  });
+
+  group('PdfFont', () {
+    test('defaults weight/style to normal', () {
+      const f = PdfFont(family: 'Test', src: '/test.ttf');
+      expect(f.family, 'Test');
+      expect(f.src, '/test.ttf');
+      expect(f.weight, 'normal');
+      expect(f.style, 'normal');
     });
   });
 
@@ -175,22 +200,26 @@ void main() {
       expect(html, contains('<html'));
       expect(html, contains('@page'));
       expect(html, contains('<p>Test</p>'));
+      expect(html, contains('class="pdf-content"'));
     });
 
-    test('includes header when provided', () {
-      final options = PdfOptions(headerHtml: '<div>Header</div>');
+    test('does not inject Paged.js script or running elements', () {
+      // v3 uses CustomPaginator; the composer must not emit Paged.js
+      // artifacts (script tag, PagedConfig shim, running-element wrappers,
+      // @top-center / @bottom-center margin boxes). Header/footer chrome
+      // is built per-page by CustomPaginator.
+      const options = PdfOptions(
+        headerHtml: '<div>Header</div>',
+        footerHtml: '<div>Footer</div>',
+      );
       final html = HtmlComposer.compose('<p>Body</p>', options);
 
-      expect(html, contains('pdf-header'));
-      expect(html, contains('Header'));
-    });
-
-    test('includes footer when provided', () {
-      final options = PdfOptions(footerHtml: '<div>Footer</div>');
-      final html = HtmlComposer.compose('<p>Body</p>', options);
-
-      expect(html, contains('pdf-footer'));
-      expect(html, contains('Footer'));
+      expect(html, isNot(contains('PagedConfig')));
+      expect(html, isNot(contains('qhp:pagedjs-done')));
+      expect(html, isNot(contains('qhp-running-header')));
+      expect(html, isNot(contains('qhp-running-footer')));
+      expect(html, isNot(contains('@top-center')));
+      expect(html, isNot(contains('@bottom-center')));
     });
   });
 
@@ -198,12 +227,15 @@ void main() {
     test('includes phase information', () {
       const exception = PdfGenerationException(
         'Test error',
-        phase: PdfGenerationPhase.canvasRendering,
+        phase: PdfGenerationPhase.vectorEmission,
+        code: 'sample-code',
       );
 
       expect(exception.message, 'Test error');
-      expect(exception.phase, PdfGenerationPhase.canvasRendering);
-      expect(exception.toString(), contains('canvasRendering'));
+      expect(exception.phase, PdfGenerationPhase.vectorEmission);
+      expect(exception.code, 'sample-code');
+      expect(exception.toString(), contains('vectorEmission'));
+      expect(exception.toString(), contains('sample-code'));
     });
   });
 }

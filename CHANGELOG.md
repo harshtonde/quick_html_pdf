@@ -1,5 +1,71 @@
 # Changelog
 
+## 3.0.0
+
+Production-grade vector PDF pipeline. Replaces the v2 raster (html2pdf/html2canvas) bytes path. Three output modes with consistent layout. No CDN at runtime.
+
+### Breaking changes
+
+- **`PdfOutput` enum reshape**: `{ bytes, download }` → `{ print, download, bytes }`.
+  - `print` — opens the browser print dialog (was `download` in v2).
+  - `download` — silent file save, no dialog. Uses the vector pipeline.
+  - `bytes` — vector emission, returns `Uint8List`. v2's html2pdf raster path is gone.
+- **Default output mode** changed from `download` to `print` (semantics preserved — both default behaviours open the browser print dialog).
+- **Vector modes (`download`/`bytes`) require a registered font**. Pass `PdfOptions.fonts: [PdfFont(...)]`. Without registration, generation throws `PdfGenerationException(code: 'no-fonts-registered')` rather than silently substituting wrong glyphs (e.g. ₹ → ¹). `print` mode is unaffected.
+- **No CDN at runtime**. jsPDF (~360 KB) is vendored as a Flutter package asset and lazy-loaded on the first vector-mode call. Consumer apps no longer add `<script>` tags to `web/index.html`.
+- **Deprecated fields**: `PdfOptions.scale`, `PdfOptions.imageQuality`, `PdfOptions.pageBreakModes` (and `PageBreakMode` enum). Vector pipeline uses CSS `page-break-*` directly. Will be removed in v3.1.
+
+### New
+
+- **`CustomPaginator`** — measure-and-flow paginator written in Dart. Reads `getBoundingClientRect()` deltas off the rendered iframe DOM, slices oversized tables row-by-row (preserving `<thead>`), handles single-table containers AND multi-table flex-row containers (Form 26AS-style "Sections" panels) with a two-phase pass: half-width slices while both children have content, then full-width tail slices once the shorter sibling exhausts. Replaces the previously-considered Paged.js polyfill — 100–200× faster on table-heavy docs (~1 s vs ~4–5 min on a 200-page tax form).
+- **`PdfFont`** — describes a TTF for jsPDF registration. Provide font data via either `src` (URL — `fetch`'d at register time) or `bytes` (raw `Uint8List`, e.g. from `rootBundle.load`). Plus `family`, `weight`, `style`.
+- **Per-page chrome built by the paginator** — header / footer / watermark slots assembled inside each `<div class="qhp-page">` wrapper from `PdfOptions.headerHtml`, `footerHtml`, `watermarkUrl` (and `watermarkSize` / `watermarkPosition`). `{{page}}`, `{{pages}}`, `{{date}}`, `{{time}}`, `{{datetime}}` substitution is applied per-page.
+- **Walker-level content clip** — `DomWalker` honors the `qhp-page-content` slot's `overflow: hidden` so descendants of the content area don't bleed into the footer band even if pagination measurements drift.
+- **Pagination safety buffer** — paginator targets `contentHeight − 2 mm` so sub-pixel layout drift between source measurement and per-page re-layout doesn't push the last row past the content rectangle.
+- **Fail-loud glyph fallback** in non-debug builds.
+- **Background-image emission** in `_emitElementBox` (data: URL only in v3.0; network URLs deferred to v3.1).
+- **Width-sanity per-line check** in DOM walker — drops down to per-word emission when jsPDF's metrics drift >5% from the browser's.
+- **Per-word + per-character fallback** for high-fidelity text positioning when CSS letter-spacing / font-cascade differences cause drift.
+- **`letter-spacing` and `word-spacing` CSS** propagated to jsPDF (`charSpace` parameter / per-word gap measurement).
+- New `PdfGenerationPhase` values: `domWalking`, `vectorEmission`.
+- New `PdfGenerationException.code` field — stable machine-readable codes for telemetry / consumer branching (`no-fonts-registered`, `glyph-fallback`, `jspdf-bootstrap-failed`, etc.).
+
+### Migration from v2
+
+```dart
+// v2
+await QuickHtmlPdf.generate(
+  htmlTemplate: tpl,
+  data: data,
+  options: PdfOptions(output: PdfOutput.download),  // ← was: print dialog
+);
+
+// v3 — keep the dialog UX
+await QuickHtmlPdf.generate(
+  htmlTemplate: tpl,
+  data: data,
+  options: PdfOptions(output: PdfOutput.print),     // explicit
+);
+
+// v3 — silent download (new!)
+await QuickHtmlPdf.generate(
+  htmlTemplate: tpl,
+  data: data,
+  options: PdfOptions(
+    output: PdfOutput.download,
+    filename: 'report.pdf',
+    fonts: [
+      PdfFont(family: 'Liberation Sans', src: 'assets/fonts/LiberationSans-Regular.ttf'),
+      PdfFont(family: 'Liberation Sans', src: 'assets/fonts/LiberationSans-Bold.ttf', weight: 'bold'),
+    ],
+  ),
+);
+```
+
+### Bundled JS versions
+
+- jsPDF: `2.5.1`
+
 ## 2.0.1
 
 ### Bug Fixes

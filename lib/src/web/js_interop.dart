@@ -1,103 +1,51 @@
-/// JavaScript interop bindings for html2canvas, jsPDF, and html2pdf.
+/// JavaScript interop bindings for jsPDF — the only JS library used by the
+/// vector pipeline. Pagination is handled in Dart by [CustomPaginator]; this
+/// file only deals with jsPDF.
 ///
-/// These bindings provide typed access to the JS libraries
-/// required for byte-mode PDF generation.
+/// jsPDF is bundled as a Flutter package asset (`assets/jspdf.umd.min.js`)
+/// and lazy-loaded into the parent window's globals on the first vector-mode
+/// `generate()` call. See [JsLibraries.bootstrapJsPdf].
 library;
 
+import 'dart:async';
 import 'dart:js_interop';
 import 'dart:js_interop_unsafe';
 import 'dart:typed_data';
 
+import 'package:flutter/services.dart' show rootBundle;
 import 'package:web/web.dart' as web;
 
-/// Check if html2canvas is available.
-@JS('html2canvas')
-external JSFunction? get _html2canvasFunction;
+import '../exceptions.dart';
 
-/// Check if jsPDF is available.
+// ---------------------------------------------------------------------------
+// jsPDF global access
+// ---------------------------------------------------------------------------
+
+/// Top-level `jspdf` global once the bundled UMD has been evaluated.
 @JS('jspdf')
-external JSObject? get _jspdfModule;
+external JSObject? get _jspdfGlobal;
 
-/// Check if html2pdf is available.
-@JS('html2pdf')
-external JSFunction? get _html2pdfFunction;
+/// `globalThis.eval` — used once at bootstrap to inject the bundled UMD.
+@JS('eval')
+external JSAny? _globalEval(JSString source);
 
-/// Call html2canvas to render an element to canvas.
-@JS('html2canvas')
-external JSPromise<web.HTMLCanvasElement> _html2canvas(
-  web.Element element,
-  JSObject options,
-);
+// ---------------------------------------------------------------------------
+// jsPDF class
+// ---------------------------------------------------------------------------
 
-/// Call html2pdf to convert an element to PDF.
-@JS('html2pdf')
-external Html2PdfBuilder _html2pdf();
-
-/// html2pdf.js builder class for chained API.
-@JS()
-@staticInterop
-class Html2PdfBuilder {}
-
-/// html2pdf.js builder extension methods.
-extension Html2PdfBuilderExtension on Html2PdfBuilder {
-  @JS('set')
-  external Html2PdfBuilder _set(JSObject options);
-
-  @JS('from')
-  external Html2PdfBuilder _from(web.Element element);
-
-  @JS('toPdf')
-  external Html2PdfBuilder _toPdf();
-
-  @JS('get')
-  external JSPromise<JSAny> _get(JSString type);
-
-  @JS('outputPdf')
-  external JSPromise<JSAny> _outputPdf(JSString type);
-
-  /// Configure html2pdf options.
-  Html2PdfBuilder set(Map<String, dynamic> options) {
-    return _set(options.jsify() as JSObject);
-  }
-
-  /// Set the source element.
-  Html2PdfBuilder from(web.Element element) {
-    return _from(element);
-  }
-
-  /// Convert to PDF.
-  Html2PdfBuilder toPdf() {
-    return _toPdf();
-  }
-
-  /// Get the jsPDF instance after conversion.
-  Future<JsPDF> getPdf() async {
-    final result = await _get('pdf'.toJS).toDart;
-    return result as JsPDF;
-  }
-
-  /// Get PDF as arraybuffer.
-  Future<Uint8List> getArrayBuffer() async {
-    final result = await _outputPdf('arraybuffer'.toJS).toDart;
-    // JavaScript returns ArrayBuffer, convert properly:
-    // JSArrayBuffer → ByteBuffer → Uint8List
-    final arrayBuffer = result as JSArrayBuffer;
-    return arrayBuffer.toDart.asUint8List();
-  }
-}
-
-/// jsPDF class constructor.
+/// jsPDF document class. Construct with [JsLibraries.createPdf].
 @JS('jspdf.jsPDF')
 @staticInterop
 class JsPDF {
   external factory JsPDF([JSObject? options]);
 }
 
-/// jsPDF instance methods.
 extension JsPDFExtension on JsPDF {
+  // raw bindings (private)
+
   @JS('addImage')
   external void _addImage(
-    JSString imageData,
+    JSAny imageData,
     JSString format,
     JSNumber x,
     JSNumber y,
@@ -109,7 +57,7 @@ extension JsPDFExtension on JsPDF {
   external void _addPage([JSString? format, JSString? orientation]);
 
   @JS('output')
-  external JSArrayBuffer _output(JSString type);
+  external JSAny _output(JSString type);
 
   @JS('save')
   external void _save(JSString filename);
@@ -125,7 +73,7 @@ extension JsPDFExtension on JsPDF {
 
   @JS('text')
   external void _text(
-    JSString text,
+    JSAny text,
     JSNumber x,
     JSNumber y, [
     JSObject? options,
@@ -135,40 +83,55 @@ extension JsPDFExtension on JsPDF {
   external void _setFontSize(JSNumber size);
 
   @JS('setTextColor')
-  external void _setTextColor(
-    JSNumber r, [
-    JSNumber? g,
-    JSNumber? b,
-  ]);
+  external void _setTextColor(JSNumber r, [JSNumber? g, JSNumber? b]);
 
   @JS('setDrawColor')
-  external void _setDrawColor(
-    JSNumber r, [
-    JSNumber? g,
-    JSNumber? b,
-  ]);
+  external void _setDrawColor(JSNumber r, [JSNumber? g, JSNumber? b]);
+
+  @JS('setFillColor')
+  external void _setFillColor(JSNumber r, [JSNumber? g, JSNumber? b]);
 
   @JS('setLineWidth')
   external void _setLineWidth(JSNumber width);
 
   @JS('line')
-  external void _line(
-    JSNumber x1,
-    JSNumber y1,
-    JSNumber x2,
-    JSNumber y2,
-  );
+  external void _line(JSNumber x1, JSNumber y1, JSNumber x2, JSNumber y2);
+
+  @JS('rect')
+  external void _rect(
+    JSNumber x,
+    JSNumber y,
+    JSNumber w,
+    JSNumber h, [
+    JSString? style,
+  ]);
 
   @JS('setFont')
-  external void _setFont(
-    JSString fontName, [
-    JSString? fontStyle,
-  ]);
+  external void _setFont(JSString fontName, [JSString? fontStyle]);
 
   @JS('getTextWidth')
   external JSNumber _getTextWidth(JSString text);
 
-  /// Add an image to the current page.
+  @JS('getStringUnitWidth')
+  external JSNumber _getStringUnitWidth(JSString text);
+
+  @JS('addFileToVFS')
+  external void _addFileToVFS(JSString filename, JSString base64);
+
+  @JS('addFont')
+  external void _addFont(
+    JSString postScriptName,
+    JSString fontName,
+    JSString fontStyle,
+  );
+
+  // friendly wrappers (public)
+
+  /// Add an image given as a base64 data URL or other string accepted by
+  /// jsPDF's `addImage` (e.g. `'data:image/png;base64,...'`).
+  ///
+  /// For `<img>` elements, prefer [addImageElement] — it skips the data-URL
+  /// round trip.
   void addImage({
     required String imageData,
     required String format,
@@ -187,68 +150,95 @@ extension JsPDFExtension on JsPDF {
     );
   }
 
-  /// Add a new page to the PDF.
+  /// Add an `<img>` element directly (no fetch / base64 round-trip).
+  void addImageElement({
+    required web.HTMLImageElement element,
+    required String format,
+    required double x,
+    required double y,
+    required double width,
+    required double height,
+  }) {
+    _addImage(
+      element as JSAny,
+      format.toJS,
+      x.toJS,
+      y.toJS,
+      width.toJS,
+      height.toJS,
+    );
+  }
+
+  /// Add a new page. Format/orientation default to the document's settings.
   void addPage({String? format, String? orientation}) {
     _addPage(format?.toJS, orientation?.toJS);
   }
 
-  /// Get PDF as Uint8List.
+  /// Get PDF as `Uint8List` (calls `output('arraybuffer')`).
   Uint8List getBytes() {
-    // JavaScript returns ArrayBuffer, convert properly:
-    // JSArrayBuffer → ByteBuffer → Uint8List
-    final arrayBuffer = _output('arraybuffer'.toJS);
-    return arrayBuffer.toDart.asUint8List();
+    final result = _output('arraybuffer'.toJS);
+    return (result as JSArrayBuffer).toDart.asUint8List();
   }
 
-  /// Save PDF to file (triggers download).
-  void save(String filename) {
-    _save(filename.toJS);
+  /// Get PDF as a `Blob` (calls `output('blob')`). Avoids a Uint8List copy
+  /// when the consumer wants to download via Blob URL.
+  web.Blob getBlob() {
+    return _output('blob'.toJS) as web.Blob;
   }
 
-  /// Get page size info.
+  /// Trigger a browser download via jsPDF's built-in `save()`.
+  void save(String filename) => _save(filename.toJS);
+
+  /// Page size in document units (pt for unit:'pt').
   (double width, double height) getPageSize() {
-    final internal = _internal;
-    final pageSize = internal.getProperty('pageSize'.toJS) as JSObject;
-    final width = (pageSize.getProperty('width'.toJS) as JSNumber).toDartDouble;
+    final pageSize = _internal.getProperty('pageSize'.toJS) as JSObject;
+    final width =
+        (pageSize.getProperty('width'.toJS) as JSNumber).toDartDouble;
     final height =
         (pageSize.getProperty('height'.toJS) as JSNumber).toDartDouble;
     return (width, height);
   }
 
-  /// Set the current page for editing.
-  void setPage(int pageNumber) {
-    _setPage(pageNumber.toJS);
-  }
+  void setPage(int pageNumber) => _setPage(pageNumber.toJS);
 
-  /// Get the total number of pages.
-  int getNumberOfPages() {
-    return _getNumberOfPages().toDartInt;
-  }
+  int getNumberOfPages() => _getNumberOfPages().toDartInt;
 
-  /// Add text to the current page.
+  /// Emit text at (x, y). Optional jsPDF text options:
+  /// - [align]: `'left'` | `'center'` | `'right'` | `'justify'`
+  /// - [maxWidth]: wrap to this width if the string is longer
+  /// - [charSpace]: extra space between characters in pt (CSS letter-spacing)
+  /// - [angle]: rotation in degrees
+  /// - [baseline]: jsPDF baseline keyword
   void text(
     String text,
     double x,
     double y, {
     String? align,
     double? maxWidth,
+    double? charSpace,
+    double? angle,
+    String? baseline,
   }) {
-    if (align != null || maxWidth != null) {
+    final hasOptions = align != null ||
+        maxWidth != null ||
+        charSpace != null ||
+        angle != null ||
+        baseline != null;
+    if (hasOptions) {
       final options = <String, dynamic>{};
       if (align != null) options['align'] = align;
       if (maxWidth != null) options['maxWidth'] = maxWidth;
+      if (charSpace != null) options['charSpace'] = charSpace;
+      if (angle != null) options['angle'] = angle;
+      if (baseline != null) options['baseline'] = baseline;
       _text(text.toJS, x.toJS, y.toJS, options.jsify() as JSObject);
     } else {
       _text(text.toJS, x.toJS, y.toJS);
     }
   }
 
-  /// Set font size in points.
-  void setFontSize(double size) {
-    _setFontSize(size.toJS);
-  }
+  void setFontSize(double size) => _setFontSize(size.toJS);
 
-  /// Set text color (RGB values 0-255 or grayscale).
   void setTextColor(int r, [int? g, int? b]) {
     if (g != null && b != null) {
       _setTextColor(r.toJS, g.toJS, b.toJS);
@@ -257,7 +247,6 @@ extension JsPDFExtension on JsPDF {
     }
   }
 
-  /// Set draw color for lines (RGB values 0-255 or grayscale).
   void setDrawColor(int r, [int? g, int? b]) {
     if (g != null && b != null) {
       _setDrawColor(r.toJS, g.toJS, b.toJS);
@@ -266,17 +255,25 @@ extension JsPDFExtension on JsPDF {
     }
   }
 
-  /// Set line width in the document's unit.
-  void setLineWidth(double width) {
-    _setLineWidth(width.toJS);
+  void setFillColor(int r, [int? g, int? b]) {
+    if (g != null && b != null) {
+      _setFillColor(r.toJS, g.toJS, b.toJS);
+    } else {
+      _setFillColor(r.toJS);
+    }
   }
 
-  /// Draw a line from (x1, y1) to (x2, y2).
-  void line(double x1, double y1, double x2, double y2) {
-    _line(x1.toJS, y1.toJS, x2.toJS, y2.toJS);
+  void setLineWidth(double width) => _setLineWidth(width.toJS);
+
+  void line(double x1, double y1, double x2, double y2) =>
+      _line(x1.toJS, y1.toJS, x2.toJS, y2.toJS);
+
+  /// Draw a rectangle. [style] is `'S'` (stroke, default), `'F'` (fill), or
+  /// `'FD'` (both).
+  void rect(double x, double y, double w, double h, {String style = 'S'}) {
+    _rect(x.toJS, y.toJS, w.toJS, h.toJS, style.toJS);
   }
 
-  /// Set font (name and optionally style).
   void setFont(String fontName, [String? fontStyle]) {
     if (fontStyle != null) {
       _setFont(fontName.toJS, fontStyle.toJS);
@@ -285,105 +282,106 @@ extension JsPDFExtension on JsPDF {
     }
   }
 
-  /// Get the width of text in the current font.
-  double getTextWidth(String text) {
-    return _getTextWidth(text.toJS).toDartDouble;
-  }
+  /// Width of the text in current-font units. Useful for width-sanity checks.
+  double getTextWidth(String text) => _getTextWidth(text.toJS).toDartDouble;
+
+  /// Width of the text in font's design units (1000ths of em). Multiply by
+  /// font size in pt to get measured width in pt.
+  double getStringUnitWidth(String text) =>
+      _getStringUnitWidth(text.toJS).toDartDouble;
+
+  /// Add a TTF (base64-encoded) to jsPDF's virtual file system.
+  void addFileToVFS(String filename, String base64) =>
+      _addFileToVFS(filename.toJS, base64.toJS);
+
+  /// Register the loaded VFS file as a font under [fontName] / [fontStyle].
+  void addFont(String postScriptName, String fontName, String fontStyle) =>
+      _addFont(postScriptName.toJS, fontName.toJS, fontStyle.toJS);
 }
 
-/// High-level wrapper for JS library operations.
+// ---------------------------------------------------------------------------
+// Library bootstrap & factory
+// ---------------------------------------------------------------------------
+
 class JsLibraries {
-  /// Check if required JS libraries are loaded (legacy mode).
-  static bool get isAvailable {
-    return _html2canvasFunction != null && _jspdfModule != null;
+  JsLibraries._();
+
+  static bool _bootstrapped = false;
+  static Future<void>? _bootstrapFuture;
+
+  /// Whether jsPDF has been loaded into the parent window globals.
+  static bool get isJsPdfAvailable => _jspdfGlobal != null;
+
+  /// Load the bundled jsPDF UMD into the parent window once.
+  ///
+  /// Idempotent and concurrency-safe: subsequent / concurrent calls await
+  /// the same future and return when bootstrap completes.
+  ///
+  /// The bundled UMD checks for `module.exports` (not present in the browser
+  /// global scope), so it falls through to the global-attach branch and sets
+  /// `globalThis.jspdf = { jsPDF: ... }`.
+  static Future<void> bootstrapJsPdf() {
+    if (_bootstrapped) return Future.value();
+    return _bootstrapFuture ??= _doBootstrap();
   }
 
-  /// Check if html2pdf.js is available (preferred mode).
-  static bool get isHtml2PdfAvailable {
-    return _html2pdfFunction != null;
-  }
-
-  /// Throw if libraries are not available.
-  static void ensureAvailable() {
-    if (!isAvailable) {
-      throw StateError(
-        'Required JS libraries not loaded. '
-        'Please add html2canvas and jsPDF scripts to your index.html:\n'
-        '<script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>\n'
-        '<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>',
+  static Future<void> _doBootstrap() async {
+    if (isJsPdfAvailable) {
+      _bootstrapped = true;
+      return;
+    }
+    try {
+      final src = await rootBundle.loadString(
+        'packages/quick_html_pdf/assets/jspdf.umd.min.js',
+      );
+      _globalEval(src.toJS);
+    } catch (e) {
+      throw PdfGenerationException(
+        'Failed to load jsPDF from package assets',
+        phase: PdfGenerationPhase.pdfAssembly,
+        code: 'jspdf-bootstrap-failed',
+        cause: e,
       );
     }
-  }
-
-  /// Throw if html2pdf.js is not available.
-  static void ensureHtml2PdfAvailable() {
-    if (!isHtml2PdfAvailable) {
-      throw StateError(
-        'html2pdf.js library not loaded. '
-        'Please add the html2pdf.js script to your index.html:\n'
-        '<script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>',
+    if (!isJsPdfAvailable) {
+      throw const PdfGenerationException(
+        'jsPDF UMD evaluated but global "jspdf" is missing',
+        phase: PdfGenerationPhase.pdfAssembly,
+        code: 'jspdf-bootstrap-failed',
       );
     }
+    _bootstrapped = true;
   }
 
-  /// Create an html2pdf builder instance.
-  static Html2PdfBuilder createHtml2Pdf() {
-    ensureHtml2PdfAvailable();
-    return _html2pdf();
-  }
-
-  /// Render an element to canvas using html2canvas.
-  static Future<web.HTMLCanvasElement> html2canvas(
-    web.Element element, {
-    double scale = 1.5,
-    bool useCORS = true,
-    bool allowTaint = false,
-    String backgroundColor = '#ffffff',
-    int? width,
-    int? height,
-    int? x,
-    int? y,
-    int? windowWidth,
-    int? windowHeight,
-    int? scrollX,
-    int? scrollY,
-  }) async {
-    ensureAvailable();
-
-    final options = <String, dynamic>{
-      'scale': scale,
-      'useCORS': useCORS,
-      'allowTaint': allowTaint,
-      'backgroundColor': backgroundColor,
-      'logging': false,
-    };
-
-    if (width != null) options['width'] = width;
-    if (height != null) options['height'] = height;
-    if (x != null) options['x'] = x;
-    if (y != null) options['y'] = y;
-    if (windowWidth != null) options['windowWidth'] = windowWidth;
-    if (windowHeight != null) options['windowHeight'] = windowHeight;
-    if (scrollX != null) options['scrollX'] = scrollX;
-    if (scrollY != null) options['scrollY'] = scrollY;
-
-    final jsOptions = options.jsify() as JSObject;
-    final canvas = await _html2canvas(element, jsOptions).toDart;
-    return canvas;
-  }
-
-  /// Create a new jsPDF instance.
+  /// Create a new jsPDF instance. Must call [bootstrapJsPdf] first.
+  ///
+  /// Defaults match v3's vector pipeline expectations:
+  /// - `unit: 'pt'` so coordinate math (`cssPx * 0.75`) is a direct multiply.
+  /// - `compress: false` for faster generation; user can set true via raw
+  ///   options if they want smaller files.
+  /// - `putOnlyUsedFonts: true` keeps file size down when many fonts are
+  ///   registered.
   static JsPDF createPdf({
     String orientation = 'portrait',
-    String unit = 'mm',
+    String unit = 'pt',
     String format = 'a4',
+    bool compress = false,
+    bool putOnlyUsedFonts = true,
   }) {
-    ensureAvailable();
-
-    final options =
-        {'orientation': orientation, 'unit': unit, 'format': format}.jsify()
-            as JSObject;
-
+    if (!isJsPdfAvailable) {
+      throw const PdfGenerationException(
+        'jsPDF not loaded — call JsLibraries.bootstrapJsPdf() first',
+        phase: PdfGenerationPhase.pdfAssembly,
+        code: 'jspdf-not-bootstrapped',
+      );
+    }
+    final options = <String, dynamic>{
+      'orientation': orientation,
+      'unit': unit,
+      'format': format,
+      'compress': compress,
+      'putOnlyUsedFonts': putOnlyUsedFonts,
+    }.jsify() as JSObject;
     return JsPDF(options);
   }
 }

@@ -53,22 +53,25 @@ class IframeManager {
     _iframe = web.document.createElement('iframe') as web.HTMLIFrameElement;
     _iframe!.id = _id;
 
-    // Style the iframe
+    // Style the iframe.
+    //
+    // - [visible: true]  → vector mode. Rendered (so getBoundingClientRect
+    //   returns valid coordinates) but positioned WAY off-screen so the
+    //   user never sees it. NOT `visibility: hidden` and NOT `opacity: 0`
+    //   because some browsers zero-out client rects for those.
+    // - [visible: false] → print mode. Same off-screen positioning, plus
+    //   `visibility: hidden` because we don't even need rects.
     if (visible) {
-      // Visible iframe for canvas rendering
       _iframe!.style
         ..position = 'fixed'
         ..top = '0'
-        ..left = '0'
+        ..left = '-10000px'
         ..width = '${options.effectiveWidthMm}mm'
-        ..height = '100vh'
+        ..height = '${options.effectiveHeightMm}mm'
         ..border = 'none'
-        ..opacity =
-            '0.01' // Nearly invisible but still renders
         ..pointerEvents = 'none'
         ..zIndex = '-9999';
     } else {
-      // Hidden iframe for print
       _iframe!.style
         ..position = 'fixed'
         ..top = '-10000px'
@@ -88,12 +91,13 @@ class IframeManager {
     // Write content to iframe
     _writeContent(html);
 
-    // Wait for content to load
-    await _waitForContentLoad();
+    // The caller owns the resource-wait (font/image readiness) via
+    // [waitForResources] — calling _waitForContentLoad here would double
+    // up the wait.
 
     if (debug) {
       final elapsed = DateTime.now().difference(startTime).inMilliseconds;
-      _log('Iframe created and content loaded in ${elapsed}ms');
+      _log('Iframe created and content written in ${elapsed}ms');
     }
   }
 

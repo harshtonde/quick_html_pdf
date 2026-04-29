@@ -103,40 +103,43 @@ class PrintStrategy {
   }
 }
 
-/// Direct download strategy using Blob.
+/// Direct download via a `Blob` — no print dialog.
 ///
-/// This provides a way to trigger download without print dialog
-/// when bytes are already available.
+/// Both [download] (from raw bytes) and [downloadBlob] (from an existing Blob)
+/// build a hidden `<a>` element, click it, and clean up. Use [downloadBlob]
+/// when the source is already a `Blob` (e.g. `JsPDF.getBlob()`) to avoid an
+/// unnecessary copy through `Uint8List`.
 class BlobDownloader {
-  /// Download bytes as a file.
+  /// Download an already-constructed `Blob` as a file.
+  static void downloadBlob({
+    required web.Blob blob,
+    required String filename,
+  }) {
+    final url = web.URL.createObjectURL(blob);
+    final anchor = web.document.createElement('a') as web.HTMLAnchorElement;
+    anchor.href = url;
+    anchor.download = filename;
+    anchor.style.display = 'none';
+    web.document.body?.appendChild(anchor);
+    anchor.click();
+    Future.delayed(const Duration(milliseconds: 100), () {
+      anchor.remove();
+      web.URL.revokeObjectURL(url);
+    });
+  }
+
+  /// Download bytes as a file. Internally wraps in a `Blob` and delegates
+  /// to [downloadBlob].
   static void download({
     required List<int> bytes,
     required String filename,
     String mimeType = 'application/pdf',
   }) {
-    // Create typed array from bytes
     final uint8List = Uint8List.fromList(bytes);
-    final jsArray = uint8List.toJS;
-
-    // Create blob from bytes
-    final blob = web.Blob([jsArray].toJS, web.BlobPropertyBag(type: mimeType));
-
-    // Create object URL
-    final url = web.URL.createObjectURL(blob);
-
-    // Create and click download link
-    final anchor = web.document.createElement('a') as web.HTMLAnchorElement;
-    anchor.href = url;
-    anchor.download = filename;
-    anchor.style.display = 'none';
-
-    web.document.body?.appendChild(anchor);
-    anchor.click();
-
-    // Cleanup
-    Future.delayed(const Duration(milliseconds: 100), () {
-      anchor.remove();
-      web.URL.revokeObjectURL(url);
-    });
+    final blob = web.Blob(
+      [uint8List.toJS].toJS,
+      web.BlobPropertyBag(type: mimeType),
+    );
+    downloadBlob(blob: blob, filename: filename);
   }
 }

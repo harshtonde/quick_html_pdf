@@ -1,30 +1,24 @@
 /// Web implementation of QuickHtmlPdf.
 ///
-/// This is the main entry point for web platform, orchestrating
-/// template rendering, HTML composition, and PDF generation.
+/// Orchestrates template rendering, HTML composition, and dispatch to the
+/// appropriate output strategy:
+/// - [PdfOutput.print]    → [PrintStrategy]   (window.print, browser dialog)
+/// - [PdfOutput.download] → [VectorStrategy]  (custom paginator + jsPDF, silent)
+/// - [PdfOutput.bytes]    → [VectorStrategy]  (custom paginator + jsPDF, returns bytes)
 library;
 
 import 'dart:typed_data';
+
+import 'package:web/web.dart' as web;
 
 import '../exceptions.dart';
 import '../html_composer.dart';
 import '../options.dart';
 import '../templating.dart';
-import 'bytes_strategy.dart';
 import 'print_strategy.dart';
+import 'vector_strategy.dart';
 
 /// Generate a PDF from an HTML template with dynamic data.
-///
-/// This is the web implementation that uses JavaScript interop
-/// for PDF generation.
-///
-/// [htmlTemplate] - HTML template with {{placeholders}}
-/// [data] - Dynamic data to inject into template
-/// [options] - PDF generation options
-///
-/// Returns:
-/// - `Uint8List` when `options.output == PdfOutput.bytes`
-/// - `null` when `options.output == PdfOutput.download` (triggers browser download)
 Future<Uint8List?> generatePdf({
   required String htmlTemplate,
   required Map<String, dynamic> data,
@@ -34,12 +28,11 @@ Future<Uint8List?> generatePdf({
   final startTime = DateTime.now();
 
   try {
-    // Step 1: Render template with data
+    // Step 1: Render template with data.
     final templateStart = DateTime.now();
     final renderedBody = TemplateEngine.render(htmlTemplate, data);
-    timings['template'] = DateTime.now()
-        .difference(templateStart)
-        .inMilliseconds;
+    timings['template'] =
+        DateTime.now().difference(templateStart).inMilliseconds;
 
     if (options.debug) {
       _log('Template rendered in ${timings['template']}ms');
@@ -48,31 +41,43 @@ Future<Uint8List?> generatePdf({
       );
     }
 
-    // Step 2: Compose full HTML document with print CSS
+    // Step 2: Compose HTML.
+    //
+    // The composed HTML uses `document.write` into an `about:blank` iframe
+    // (see IframeManager). That makes the iframe's base URI `about:blank`,
+    // so we pass the parent app's location.href as `baseHref` for relative
+    // URL resolution (e.g. consumer-bundled font src paths).
     final composeStart = DateTime.now();
-    final fullHtml = HtmlComposer.compose(renderedBody, options);
-    timings['compose'] = DateTime.now().difference(composeStart).inMilliseconds;
+    final fullHtml = HtmlComposer.compose(
+      renderedBody,
+      options,
+      baseHref: web.window.location.href,
+    );
+    timings['compose'] =
+        DateTime.now().difference(composeStart).inMilliseconds;
 
     if (options.debug) {
       _log('HTML composed in ${timings['compose']}ms');
       _log('Full HTML size: ${(fullHtml.length / 1024).toStringAsFixed(1)} KB');
     }
 
-    // Step 3: Generate PDF based on output mode
+    // Step 3: Generate PDF based on output mode.
     final pdfStart = DateTime.now();
     Uint8List? result;
 
     switch (options.output) {
-      case PdfOutput.download:
-        // Fast path: use native browser print
+      case PdfOutput.print:
+        // Native browser print dialog — no JS dep, fastest.
         final strategy = PrintStrategy(options: options, debug: options.debug);
         await strategy.execute(fullHtml);
         result = null;
         break;
 
+      case PdfOutput.download:
       case PdfOutput.bytes:
-        // Capture path: use html2canvas + jsPDF
-        final strategy = BytesStrategy(options: options, debug: options.debug);
+        // Vector pipeline: CustomPaginator + jsPDF + DOM walker.
+        final strategy =
+            VectorStrategy(options: options, debug: options.debug);
         result = await strategy.execute(fullHtml);
         break;
     }
@@ -106,9 +111,11 @@ Future<Uint8List?> generatePdf({
   }
 }
 
-/// Trigger a download of bytes as a PDF file.
+/// Trigger a download of bytes as a PDF file. Use when you have PDF bytes
+/// from elsewhere (e.g. a server) and want to save them via the browser.
 ///
-/// Use this when you have PDF bytes and want to download them.
+/// For new code, prefer `PdfOutput.download` mode in [generatePdf] — it
+/// skips the Uint8List round-trip.
 void downloadPdfBytes({required Uint8List bytes, required String filename}) {
   BlobDownloader.download(
     bytes: bytes,
@@ -117,7 +124,6 @@ void downloadPdfBytes({required Uint8List bytes, required String filename}) {
   );
 }
 
-/// Log a debug message.
 void _log(String message) {
   // ignore: avoid_print
   print('[QuickHtmlPdf] $message');

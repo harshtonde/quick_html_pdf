@@ -1,0 +1,9 @@
+.claude/
+build/
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+**/doc/api/
+.DS_Store
+.idea/
+*.iml

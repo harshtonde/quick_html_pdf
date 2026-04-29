@@ -1,247 +1,116 @@
-/// HTML composition with print CSS for QuickHtmlPdf.
+/// HTML composition for QuickHtmlPdf v3.
 ///
-/// Builds a complete HTML document with proper print styles
-/// and CSS page-break properties for accurate PDF generation.
+/// Builds a complete HTML document for the rendering iframe. The output is
+/// consumed two ways:
+///
+/// - `PdfOutput.print` — written into a hidden iframe and handed to
+///   `window.print()`.
+/// - `PdfOutput.download` / `PdfOutput.bytes` — written into an off-screen
+///   iframe, paginated by [CustomPaginator], then walked by [DomWalker]
+///   which emits jsPDF vector primitives.
+///
+/// The composer no longer injects Paged.js. Pagination is handled by the
+/// custom paginator, and per-page header/footer/watermark slots are built
+/// inside the page wrappers from `PdfOptions.headerHtml` / `footerHtml` /
+/// `watermarkUrl`.
 library;
 
 import 'options.dart';
 
-/// Composes a complete HTML document with print CSS.
 class HtmlComposer {
-  /// Compose a full HTML document with print CSS from the rendered content.
+  HtmlComposer._();
+
+  /// Compose a full HTML document.
   ///
-  /// [bodyContent] - The rendered HTML body content
-  /// [options] - PDF options including page format, margins, header/footer
-  ///
-  /// The generated HTML includes:
-  /// - CSS page-break properties for intelligent content splitting
-  /// - Utility classes for manual page break control
-  /// - Proper handling for tables, images, and headings
-  /// - Support for html2pdf.js page break modes
-  static String compose(String bodyContent, PdfOptions options) {
-    final pageSize = _getPageSizeCSS(options);
+  /// [bodyContent] — rendered HTML body content from `TemplateEngine.render`.
+  /// [options] — page format, margins, header/footer, fonts, etc.
+  /// [baseHref] — value for the `<base href="...">` tag. Required so that
+  ///   relative URLs (e.g. font src paths) resolve against the parent app's
+  ///   origin rather than `about:blank`.
+  static String compose(
+    String bodyContent,
+    PdfOptions options, {
+    String? baseHref,
+  }) {
+    final pageSize = _pageSizeCss(options);
     final margins = options.margins.toCss();
 
-    // For bytes mode (html2pdf.js), headers/footers are added as overlays
-    // after PDF generation, so we don't add padding in the HTML.
-    // For download mode, headers/footers use fixed CSS positioning.
-    final useFixedHeaders = options.output == PdfOutput.download;
+    final base = (baseHref != null && baseHref.isNotEmpty)
+        ? '  <base href="${_escapeAttr(baseHref)}">\n'
+        : '';
 
-    // Estimate header/footer heights for fixed positioning mode
-    final headerHeight = options.headerHeightMm.round();
-    final footerHeight = options.footerHeightMm.round();
-
-    final contentPaddingTop = (useFixedHeaders && options.hasHeader) ? headerHeight : 0;
-    final contentPaddingBottom = (useFixedHeaders && options.hasFooter) ? footerHeight : 0;
-
-    return '''
-<!DOCTYPE html>
+    return '''<!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8">
+$base  <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>PDF Document</title>
-  <style>
-    /* Reset and base styles */
-    *, *::before, *::after {
-      box-sizing: border-box;
-    }
-    
-    html, body {
-      margin: 0;
-      padding: 0;
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
-      font-size: 12pt;
-      line-height: 1.4;
-      color: #000;
-      background: #fff;
-    }
-    
-    /* Print-specific styles */
+  <style id="qhp-composer-styles">
+    /* Reset and base styles. */
+    *, *::before, *::after { box-sizing: border-box; }
+    html, body { margin: 0; padding: 0; background: #fff; }
+
+    /* @page rule — used by `PdfOutput.print` (the browser's print engine
+       reads this for page size + margins). The custom paginator computes
+       its own geometry from `PdfOptions` and ignores @page. */
     @page {
       size: $pageSize;
       margin: $margins;
     }
-    
-    @media print {
-      html, body {
-        width: ${options.effectiveWidthMm}mm;
-        margin: 0;
-        padding: 0;
-      }
-      
-      /* Table pagination */
-      table {
-        border-collapse: collapse;
-        width: 100%;
-      }
-      
-      thead {
-        display: table-header-group;
-      }
-      
-      tfoot {
-        display: table-footer-group;
-      }
-      
-      tbody {
-        display: table-row-group;
-      }
-      
-      tr {
-        page-break-inside: avoid;
-      }
-      
-      td, th {
-        page-break-inside: avoid;
-      }
-      
-      /* Prevent orphaned headings */
-      h1, h2, h3, h4, h5, h6 {
-        page-break-after: avoid;
-        break-after: avoid;
-      }
-      
-      /* Page break utilities - for both CSS and html2pdf.js */
-      .page-break, .html2pdf__page-break {
-        break-after: page;
-        page-break-after: always;
-        display: block;
-        height: 0;
-        margin: 0;
-        padding: 0;
-      }
-      
-      .page-break-before {
-        break-before: page;
-        page-break-before: always;
-      }
-      
-      .no-break, [data-html2pdf-page-break="avoid"] {
-        break-inside: avoid;
-        page-break-inside: avoid;
-      }
-      
-      /* Avoid breaking inside important elements */
-      img, figure, pre, blockquote {
-        page-break-inside: avoid;
-        break-inside: avoid;
-      }
-      
-      /* Orphans and widows control */
-      p, li {
-        orphans: 3;
-        widows: 3;
-      }
-      
-${(useFixedHeaders && options.hasHeader) ? _generateHeaderCSS(headerHeight, options.margins) : ''}
-${(useFixedHeaders && options.hasFooter) ? _generateFooterCSS(footerHeight, options.margins) : ''}
-    }
-    
-    /* ========================================
-       CSS Page Break Properties
-       (Respected by both browser print and html2pdf.js)
-       ======================================== */
-    
-    /* Force page break after an element */
-    .page-break, .html2pdf__page-break {
+
+    /* Page-break utility classes. */
+    .page-break {
       break-after: page;
       page-break-after: always;
+      display: block;
+      height: 0;
     }
-    
-    /* Force page break before an element */
     .page-break-before {
       break-before: page;
       page-break-before: always;
     }
-    
-    /* Avoid page break inside an element */
     .no-break {
       break-inside: avoid;
       page-break-inside: avoid;
     }
-    
-    /* Keep element with the next element */
     .keep-with-next {
       break-after: avoid;
       page-break-after: avoid;
     }
-    
-    /* Screen preview styles (for iframe rendering) */
-    @media screen {
-      body {
-        max-width: ${options.effectiveWidthMm}mm;
-        margin: 0 auto;
-        padding: ${options.margins.topMm}mm ${options.margins.rightMm}mm ${options.margins.bottomMm}mm ${options.margins.leftMm}mm;
-      }
+
+    /* Reasonable defaults for tables — consumers can override. */
+    table { border-collapse: collapse; width: 100%; }
+    thead { display: table-header-group; }
+    tfoot { display: table-footer-group; }
+    tr, td, th { page-break-inside: avoid; break-inside: avoid; }
+
+    /* Avoid orphaned headings. */
+    h1, h2, h3, h4, h5, h6 {
+      page-break-after: avoid;
+      break-after: avoid;
     }
-    
-    /* Content container padding for header/footer space */
-    .pdf-content {
-      padding-top: ${contentPaddingTop}mm;
-      padding-bottom: ${contentPaddingBottom}mm;
-    }
-    
-    /* Common utility classes */
+
+    /* Common utility classes. */
     .text-center { text-align: center; }
     .text-right { text-align: right; }
     .text-left { text-align: left; }
     .font-bold { font-weight: bold; }
     .font-normal { font-weight: normal; }
-    
-    /* Table styling defaults */
-    table {
-      border-collapse: collapse;
-      width: 100%;
-      margin-bottom: 1em;
-    }
-    
-    th, td {
-      padding: 8px 12px;
-      text-align: left;
-      border-bottom: 1px solid #ddd;
-    }
-    
-    th {
-      background-color: #f5f5f5;
-      font-weight: 600;
-    }
-    
-    tbody tr:hover {
-      background-color: #fafafa;
-    }
-    
-    /* Card/section styling with avoid break */
-    .card, .section, .panel {
-      page-break-inside: avoid;
-      break-inside: avoid;
-    }
-    
-    /* Invoice/report specific - keep items together */
-    .invoice-item, .report-row, .data-row {
-      page-break-inside: avoid;
-      break-inside: avoid;
-    }
   </style>
 </head>
 <body>
-${(useFixedHeaders && options.hasHeader) ? _generateHeaderHTML(options.headerHtml!) : ''}
 <div class="pdf-content">
 $bodyContent
 </div>
-${(useFixedHeaders && options.hasFooter) ? _generateFooterHTML(options.footerHtml!) : ''}
 </body>
 </html>
 ''';
   }
 
-  /// Get CSS page size string.
-  static String _getPageSizeCSS(PdfOptions options) {
-    final format = options.pageFormat;
-    final orientation = options.orientation;
-
-    String sizeName;
-    switch (format) {
+  /// Convert page format + orientation into a CSS `size` value.
+  static String _pageSizeCss(PdfOptions options) {
+    final String sizeName;
+    switch (options.pageFormat) {
       case PdfPageFormat.a4:
         sizeName = 'A4';
         break;
@@ -252,97 +121,34 @@ ${(useFixedHeaders && options.hasFooter) ? _generateFooterHTML(options.footerHtm
         sizeName = 'legal';
         break;
     }
-
-    final orientationName = orientation == PdfOrientation.landscape
-        ? 'landscape'
-        : 'portrait';
+    final orientationName =
+        options.orientation == PdfOrientation.landscape ? 'landscape' : 'portrait';
     return '$sizeName $orientationName';
   }
 
-  /// Generate CSS for fixed header.
-  static String _generateHeaderCSS(int heightMm, PdfMargins margins) {
-    return '''
-      /* Fixed header styles */
-      .pdf-header {
-        position: fixed;
-        top: 0;
-        left: 0;
-        right: 0;
-        height: ${heightMm}mm;
-        padding: 5mm ${margins.rightMm}mm 5mm ${margins.leftMm}mm;
-        background: #fff;
-        border-bottom: 1px solid #eee;
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-      }
-''';
-  }
+  static String _escapeAttr(String s) => s
+      .replaceAll('&', '&amp;')
+      .replaceAll('"', '&quot;')
+      .replaceAll('<', '&lt;');
 
-  /// Generate CSS for fixed footer.
-  static String _generateFooterCSS(int heightMm, PdfMargins margins) {
-    return '''
-      /* Fixed footer styles */
-      .pdf-footer {
-        position: fixed;
-        bottom: 0;
-        left: 0;
-        right: 0;
-        height: ${heightMm}mm;
-        padding: 5mm ${margins.rightMm}mm 5mm ${margins.leftMm}mm;
-        background: #fff;
-        border-top: 1px solid #eee;
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        font-size: 10pt;
-        color: #666;
-      }
-''';
-  }
-
-  /// Generate header HTML wrapper.
-  static String _generateHeaderHTML(String headerContent) {
-    return '''
-<header class="pdf-header">
-$headerContent
-</header>
-''';
-  }
-
-  /// Generate footer HTML wrapper.
-  static String _generateFooterHTML(String footerContent) {
-    return '''
-<footer class="pdf-footer">
-$footerContent
-</footer>
-''';
-  }
-
-  /// Create a simple table from data for common use cases.
+  /// Helper to build a simple `<table>` from headers + rows.
   static String createTable({
     required List<String> headers,
     required List<List<dynamic>> rows,
     String? tableClass,
     bool striped = false,
   }) {
-    final buffer = StringBuffer();
-
-    buffer.writeln(
-      '<table${tableClass != null ? ' class="$tableClass"' : ''}>',
-    );
-
-    // Header
-    buffer.writeln('<thead>');
-    buffer.writeln('<tr>');
+    final buffer = StringBuffer()
+      ..writeln('<table${tableClass != null ? ' class="$tableClass"' : ''}>')
+      ..writeln('<thead>')
+      ..writeln('<tr>');
     for (final header in headers) {
       buffer.writeln('<th>$header</th>');
     }
-    buffer.writeln('</tr>');
-    buffer.writeln('</thead>');
-
-    // Body
-    buffer.writeln('<tbody>');
+    buffer
+      ..writeln('</tr>')
+      ..writeln('</thead>')
+      ..writeln('<tbody>');
     for (var i = 0; i < rows.length; i++) {
       final row = rows[i];
       final rowClass = striped && i.isOdd ? ' class="striped"' : '';
@@ -352,10 +158,9 @@ $footerContent
       }
       buffer.writeln('</tr>');
     }
-    buffer.writeln('</tbody>');
-
-    buffer.writeln('</table>');
-
+    buffer
+      ..writeln('</tbody>')
+      ..writeln('</table>');
     return buffer.toString();
   }
 }

@@ -29,6 +29,11 @@ class PdfGenerationException implements Exception {
   /// The phase during which the error occurred.
   final PdfGenerationPhase phase;
 
+  /// Stable machine-readable error code for telemetry / consumer branching.
+  /// Example values: `no-fonts-registered`, `glyph-fallback`,
+  /// `jspdf-bootstrap-failed`.
+  final String? code;
+
   /// The underlying error, if any.
   final Object? cause;
 
@@ -36,13 +41,16 @@ class PdfGenerationException implements Exception {
   const PdfGenerationException(
     this.message, {
     this.phase = PdfGenerationPhase.unknown,
+    this.code,
     this.cause,
   });
 
   @override
   String toString() {
     final buffer = StringBuffer('PdfGenerationException: $message');
-    buffer.writeln(' (phase: ${phase.name})');
+    buffer.write(' (phase: ${phase.name}');
+    if (code != null) buffer.write(', code: $code');
+    buffer.writeln(')');
     if (cause != null) {
       buffer.writeln('Caused by: $cause');
     }
@@ -67,7 +75,14 @@ enum PdfGenerationPhase {
   /// Image loading phase
   imageLoading,
 
-  /// Canvas rendering phase (bytes mode)
+  /// DOM walking phase (vector mode)
+  domWalking,
+
+  /// Vector primitive emission phase (vector mode)
+  vectorEmission,
+
+  /// Canvas rendering phase (legacy raster mode; v2 only)
+  @Deprecated('Removed with v2 raster pipeline. Will be deleted in v3.1.')
   canvasRendering,
 
   /// PDF assembly phase

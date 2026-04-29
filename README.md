@@ -1,574 +1,197 @@
 # QuickHtmlPdf
 
-A fast, high-performance Flutter Web package for converting HTML templates with dynamic data into PDFs using JavaScript interoperability.
+Fast HTML-to-PDF for Flutter Web. Produces vector PDFs (selectable, searchable text) without a CDN dependency.
 
 ## Features
 
-- **Instant Download Mode**: Uses native browser print for near-instant PDF generation (~50ms)
-- **Bytes Mode**: Returns PDF as `Uint8List` for further processing (upload, store, etc.)
-- **Intelligent Page Breaks**: Respects CSS `page-break-inside: avoid`, `page-break-before/after: always`
-- **Dynamic Headers/Footers**: Custom headers and footers with `{{page}}` and `{{pages}}` placeholders
-- **Template Engine**: Support for `{{placeholders}}`, loops, and raw HTML insertion
-- **Print CSS**: Optimized CSS for accurate pagination and table handling
-- **Large Documents**: Efficient rendering for 200+ page documents
-- **Multiple Formats**: A4, Letter, Legal with portrait/landscape orientation
+- **Three output modes** — `print` (browser dialog), `download` (silent file save), `bytes` (`Uint8List` for upload/processing).
+- **Vector PDF output** — text is selectable and searchable; small file sizes; fast generation. Built on a custom Dart-side measure-and-flow paginator that reads layout off the rendered iframe DOM, plus `jsPDF` (vendored) for vector emission, driven by a custom DOM walker.
+- **Built for table-heavy docs** — the paginator slices oversized tables row-by-row (preserving `<thead>`) and handles multi-table flex-row layouts with a two-phase pass (side-by-side slices while both halves have content, then full-width tail slices once the shorter sibling exhausts). Empirically 100–200× faster than a generic CSS-Paged-Media polyfill on a 200-page tax form (~1 s vs 4–5 min).
+- **Self-contained at runtime** — jsPDF (~360 KB) is vendored as a Flutter package asset and lazy-loaded on the first vector-mode call. No `<script>` tags to add to `web/index.html`. No CDN at runtime.
+- **Per-page chrome** — header / footer / watermark slots built inside each `qhp-page` wrapper from `PdfOptions.headerHtml`, `footerHtml`, `watermarkUrl`. Page-counter and date/time placeholders substituted per page.
+- **Template engine** — `{{placeholders}}`, dot notation, raw HTML, `{{#each}}` loops, `{{@index}}`.
+- **Fail loudly** — vector mode throws clear, coded exceptions when fonts aren't registered or text contains glyphs the registered font can't render. No silent visual loss.
+
+## Platform support
+
+Web only. Throws `UnsupportedError` on mobile and desktop.
 
 ## Installation
 
-Add to your `pubspec.yaml`:
-
 ```yaml
 dependencies:
-  quick_html_pdf: ^1.0.0
+  quick_html_pdf: ^3.0.0
 ```
 
-### Required: Add JS Libraries (for Bytes Mode)
+That's it — no script-tag setup needed.
 
-If you plan to use `PdfOutput.bytes`, add the html2pdf.js script to your `web/index.html`:
+## Quick start
 
-```html
-<head>
-  <!-- ... other head content ... -->
-
-  <!-- RECOMMENDED: html2pdf.js for intelligent page breaks -->
-  <!-- This bundle includes html2canvas and jsPDF -->
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
-</head>
-```
-
-**Note:** html2pdf.js provides intelligent page breaks that respect CSS `page-break` properties. If you don't need intelligent page breaks, you can use the legacy libraries instead:
-
-```html
-<!-- Legacy option (without intelligent page breaks) -->
-<script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
-```
-
-**Note:** These libraries are NOT required for `PdfOutput.download` mode, which uses the browser's native print dialog.
-
-## Quick Start
-
-### Basic Usage
+### `print` mode — browser dialog (no font setup)
 
 ```dart
 import 'package:quick_html_pdf/quick_html_pdf.dart';
 
-// Generate PDF and trigger download
 await QuickHtmlPdf.generate(
   htmlTemplate: '<h1>Hello {{name}}</h1>',
   data: {'name': 'World'},
-  options: PdfOptions(
-    output: PdfOutput.download,
-    filename: 'hello.pdf',
-  ),
+  options: const PdfOptions(output: PdfOutput.print),
 );
+// Browser print dialog opens; user picks "Save as PDF".
 ```
 
-### Get PDF as Bytes
+### `download` mode — silent file save (requires fonts)
+
+```dart
+await QuickHtmlPdf.generate(
+  htmlTemplate: '<h1>Hello {{name}}</h1>',
+  data: {'name': 'World'},
+  options: const PdfOptions(
+    output: PdfOutput.download,
+    filename: 'hello.pdf',
+    fonts: [
+      PdfFont(
+        family: 'Liberation Sans',
+        src: 'assets/fonts/LiberationSans-Regular.ttf',
+      ),
+      PdfFont(
+        family: 'Liberation Sans',
+        src: 'assets/fonts/LiberationSans-Bold.ttf',
+        weight: 'bold',
+      ),
+    ],
+  ),
+);
+// hello.pdf saves directly to the user's downloads folder. No dialog.
+```
+
+### `bytes` mode — Uint8List for upload/processing
 
 ```dart
 final bytes = await QuickHtmlPdf.generate(
-  htmlTemplate: '<h1>Hello {{name}}</h1>',
-  data: {'name': 'World'},
-  options: PdfOptions(output: PdfOutput.bytes),
-);
-
-if (bytes != null) {
-  print('PDF size: ${bytes.length} bytes');
-  // Upload, store, or process the bytes
-
-  // Or trigger download manually:
-  QuickHtmlPdf.downloadBytes(bytes: bytes, filename: 'hello.pdf');
-}
-```
-
-## Template Syntax
-
-### Simple Interpolation
-
-```dart
-// Template
-'<p>Hello {{name}}, you have {{count}} messages.</p>'
-
-// Data
-{'name': 'John', 'count': 5}
-
-// Output
-'<p>Hello John, you have 5 messages.</p>'
-```
-
-### Nested Objects
-
-```dart
-// Template
-'<p>{{user.name}} works at {{user.company.name}}</p>'
-
-// Data
-{
-  'user': {
-    'name': 'Alice',
-    'company': {'name': 'Acme Corp'}
-  }
-}
-```
-
-### Loops with `{{#each}}`
-
-```dart
-// Template
-'''
-<table>
-  <tr><th>Item</th><th>Price</th></tr>
-  {{#each items}}
-  <tr>
-    <td>{{this.name}}</td>
-    <td>{{this.price}}</td>
-  </tr>
-  {{/each}}
-</table>
-'''
-
-// Data
-{
-  'items': [
-    {'name': 'Widget', 'price': '\$10'},
-    {'name': 'Gadget', 'price': '\$20'},
-  ]
-}
-```
-
-### Loop Variables
-
-- `{{this}}` - Current item value
-- `{{this.field}}` - Field of current item
-- `{{@index}}` - Zero-based loop index
-- `{{@index1}}` - One-based loop index
-- `{{@first}}` - True if first iteration
-- `{{@last}}` - True if last iteration
-
-### Raw HTML (Unescaped)
-
-```dart
-// Template - triple braces for raw HTML
-'<div>{{{htmlContent}}}</div>'
-
-// Data
-{'htmlContent': '<strong>Bold</strong>'}
-
-// Output (HTML is not escaped)
-'<div><strong>Bold</strong></div>'
-```
-
-### HTML Escaping
-
-Regular `{{}}` automatically escapes HTML entities:
-
-```dart
-// Template
-'<p>{{userInput}}</p>'
-
-// Data
-{'userInput': '<script>alert("xss")</script>'}
-
-// Output (safely escaped)
-'<p>&lt;script&gt;alert("xss")&lt;/script&gt;</p>'
-```
-
-## Configuration Options
-
-```dart
-PdfOptions(
-  // Page format (default: A4)
-  pageFormat: PdfPageFormat.a4,  // or .letter, .legal
-
-  // Orientation (default: portrait)
-  orientation: PdfOrientation.portrait,  // or .landscape
-
-  // Margins in millimeters
-  margins: PdfMargins(
-    topMm: 20,
-    rightMm: 15,
-    bottomMm: 20,
-    leftMm: 15,
-  ),
-
-  // Output mode
-  output: PdfOutput.download,  // or .bytes
-
-  // Filename for download
-  filename: 'document.pdf',
-
-  // Header with dynamic placeholders (appears on each page)
-  headerHtml: 'Document Title | Page {{page}} of {{pages}}',
-  headerHeightMm: 15,     // Height of header area
-  headerFontSize: 10,     // Font size in points
-  showHeaderLine: true,   // Draw separator line below header
-
-  // Footer with dynamic placeholders (appears on each page)
-  footerHtml: 'Confidential | Generated on {{date}}',
-  footerHeightMm: 15,     // Height of footer area
-  footerFontSize: 9,      // Font size in points
-  showFooterLine: true,   // Draw separator line above footer
-
-  // Page break modes for intelligent content splitting (bytes mode)
-  pageBreakModes: [PageBreakMode.css, PageBreakMode.avoidAll],
-
-  // Debug logging
-  debug: false,
-
-  // Advanced: Scale for canvas rendering (bytes mode only)
-  scale: 1.5,  // Higher = better quality, slower
-
-  // Advanced: JPEG quality (bytes mode only)
-  imageQuality: 0.92,
-
-  // Advanced: Resource loading timeout
-  resourceTimeoutMs: 10000,
-)
-```
-
-### Header/Footer Placeholders
-
-The following placeholders are supported in `headerHtml` and `footerHtml`:
-
-| Placeholder | Description | Example Output |
-| ----------- | ----------- | -------------- |
-| `{{page}}` | Current page number | 1, 2, 3... |
-| `{{pages}}` | Total page count | 10 |
-| `{{date}}` | Current date (YYYY-MM-DD) | 2024-01-08 |
-| `{{time}}` | Current time (HH:MM) | 14:30 |
-| `{{datetime}}` | Date and time | 2024-01-08 14:30 |
-
-Example:
-```dart
-PdfOptions(
-  headerHtml: 'Annual Report 2024 | Page {{page}} of {{pages}}',
-  footerHtml: 'Confidential | Generated: {{datetime}}',
-)
-```
-
-## Sample Templates
-
-### Simple Invoice (Single Page)
-
-```dart
-const invoiceTemplate = '''
-<div style="font-family: Arial, sans-serif; padding: 40px;">
-  <div style="display: flex; justify-content: space-between;">
-    <div>
-      <h1 style="margin: 0;">INVOICE</h1>
-      <p>{{company.name}}</p>
-    </div>
-    <div style="text-align: right;">
-      <p><strong>Invoice #:</strong> {{invoiceNumber}}</p>
-      <p><strong>Date:</strong> {{date}}</p>
-    </div>
-  </div>
-
-  <div style="margin: 30px 0;">
-    <h3>Bill To:</h3>
-    <p>{{customer.name}}<br>{{customer.address}}</p>
-  </div>
-
-  <table style="width: 100%; border-collapse: collapse;">
-    <thead>
-      <tr style="background: #f5f5f5;">
-        <th style="padding: 12px; text-align: left; border-bottom: 2px solid #ddd;">Item</th>
-        <th style="padding: 12px; text-align: right; border-bottom: 2px solid #ddd;">Qty</th>
-        <th style="padding: 12px; text-align: right; border-bottom: 2px solid #ddd;">Price</th>
-        <th style="padding: 12px; text-align: right; border-bottom: 2px solid #ddd;">Total</th>
-      </tr>
-    </thead>
-    <tbody>
-      {{#each items}}
-      <tr>
-        <td style="padding: 12px; border-bottom: 1px solid #eee;">{{this.name}}</td>
-        <td style="padding: 12px; text-align: right; border-bottom: 1px solid #eee;">{{this.qty}}</td>
-        <td style="padding: 12px; text-align: right; border-bottom: 1px solid #eee;">{{this.price}}</td>
-        <td style="padding: 12px; text-align: right; border-bottom: 1px solid #eee;">{{this.total}}</td>
-      </tr>
-      {{/each}}
-    </tbody>
-  </table>
-
-  <div style="text-align: right; margin-top: 20px;">
-    <p style="font-size: 20px;"><strong>Total: {{grandTotal}}</strong></p>
-  </div>
-</div>
-''';
-
-// Generate invoice
-await QuickHtmlPdf.generate(
-  htmlTemplate: invoiceTemplate,
-  data: {
-    'company': {'name': 'Acme Corp'},
-    'invoiceNumber': 'INV-001',
-    'date': 'January 8, 2024',
-    'customer': {
-      'name': 'John Smith',
-      'address': '123 Main St, City, ST 12345',
-    },
-    'items': [
-      {'name': 'Widget', 'qty': 2, 'price': '\$50.00', 'total': '\$100.00'},
-      {'name': 'Gadget', 'qty': 1, 'price': '\$75.00', 'total': '\$75.00'},
-    ],
-    'grandTotal': '\$175.00',
-  },
+  htmlTemplate: '<h1>Report</h1>',
+  data: {},
   options: PdfOptions(
-    output: PdfOutput.download,
-    filename: 'invoice.pdf',
+    output: PdfOutput.bytes,
+    fonts: [/* …same as above… */],
   ),
 );
+// bytes is a Uint8List — POST to a server, store in IndexedDB, etc.
 ```
 
-### Large Report (Multi-Page with Table)
+## Output modes summary
+
+| Mode | Returns | Browser dialog | Vector | Speed (100 pages, modern laptop) | When to use |
+|---|---|---|---|---|---|
+| `print` | `null` | yes | yes | <1 s | User can also send to a physical printer; you don't mind a dialog |
+| `download` | `null` | **no** | yes | ~1–3 s | Silent file save — typical PDF download UX |
+| `bytes` | `Uint8List` | no | yes | ~1–3 s | Upload to API / store in IndexedDB / process before saving |
+
+## Custom fonts (required for vector modes)
+
+`PdfOutput.download` and `PdfOutput.bytes` require at least one font registered via `PdfOptions.fonts`. Without one, generation throws:
+
+```
+PdfGenerationException: Vector PDF mode requires at least one font registered
+via PdfOptions.fonts. (phase: vectorEmission, code: no-fonts-registered)
+```
+
+This is deliberate — silently falling back to jsPDF's WinAnsi-only built-ins would render any non-Latin-1 character (₹ ™ © Hindi etc.) as the wrong glyph in production output. Better to fail loudly.
+
+`PdfOutput.print` does not need font registration — the browser uses system fonts.
+
+### Two ways to provide font data
+
+`PdfFont` accepts either `src` (URL — fetched at register time) or `bytes` (raw `Uint8List`):
 
 ```dart
-const reportTemplate = '''
-<div style="font-family: Arial, sans-serif;">
-  <h1 style="text-align: center;">{{title}}</h1>
-  <p style="text-align: center; color: #666;">Generated: {{date}}</p>
+import 'package:flutter/services.dart' show rootBundle;
 
-  <table style="width: 100%; border-collapse: collapse; font-size: 11px;">
-    <thead>
-      <tr style="background: #1e40af; color: white;">
-        <th style="padding: 8px;">#</th>
-        <th style="padding: 8px;">Date</th>
-        <th style="padding: 8px;">Customer</th>
-        <th style="padding: 8px;">Product</th>
-        <th style="padding: 8px; text-align: right;">Amount</th>
-      </tr>
-    </thead>
-    <tbody>
-      {{#each rows}}
-      <tr style="{{this.rowStyle}}">
-        <td style="padding: 6px; border-bottom: 1px solid #eee;">{{@index1}}</td>
-        <td style="padding: 6px; border-bottom: 1px solid #eee;">{{this.date}}</td>
-        <td style="padding: 6px; border-bottom: 1px solid #eee;">{{this.customer}}</td>
-        <td style="padding: 6px; border-bottom: 1px solid #eee;">{{this.product}}</td>
-        <td style="padding: 6px; border-bottom: 1px solid #eee; text-align: right;">{{this.amount}}</td>
-      </tr>
-      {{/each}}
-    </tbody>
-  </table>
-</div>
-''';
+// Option A: load via rootBundle (recommended for Flutter-asset fonts).
+final regularBytes =
+    (await rootBundle.load('assets/fonts/NotoSans-Regular.ttf')).buffer.asUint8List();
 
-// Generate 1000 rows of data
-final rows = List.generate(1000, (i) => {
-  'date': '2024-01-${(i % 28 + 1).toString().padLeft(2, '0')}',
-  'customer': 'Customer ${i + 1}',
-  'product': 'Product ${(i % 10) + 1}',
-  'amount': '\$${(i * 10 + 99).toStringAsFixed(2)}',
-  'rowStyle': i.isOdd ? 'background: #f9f9f9;' : '',
-});
+PdfFont(family: 'Noto Sans', bytes: regularBytes);
 
-await QuickHtmlPdf.generate(
-  htmlTemplate: reportTemplate,
-  data: {
-    'title': 'Sales Report 2024',
-    'date': 'January 8, 2024',
-    'rows': rows,
-  },
-  options: PdfOptions(
-    output: PdfOutput.download,
-    filename: 'sales-report.pdf',
-    headerHtml: '<div><strong>Sales Report</strong></div>',
-    footerHtml: '<div style="color: #666;">Confidential</div>',
-  ),
-);
+// Option B: same-origin URL (the package will fetch it).
+PdfFont(family: 'Noto Sans', src: 'fonts/NotoSans-Regular.ttf');
 ```
 
-## Performance Tips for Large PDFs
+### Recommended choices
 
-### Use Download Mode When Possible
+- **Liberation Sans** — metric-compatible with Arial, OFL-licensed, includes ₹ and Latin Extended. Best when your CSS uses `font-family: Arial, Helvetica, sans-serif`.
+- **Noto Sans Devanagari** — covers Latin + ₹ + Devanagari. Right when content includes Hindi names alongside English / numeric data (e.g. Indian government / financial forms).
 
-`PdfOutput.download` is significantly faster than `PdfOutput.bytes`:
+For CJK content, register the matching Noto family (Noto Sans CJK SC/JP/KR/TC).
 
-| Document Size | Download Mode | Bytes Mode |
-| ------------- | ------------- | ---------- |
-| 10 pages      | ~50ms         | ~500ms     |
-| 100 pages     | ~50ms         | ~3s        |
-| 300 pages     | ~50ms         | ~8s        |
+## Template syntax
 
-Download mode leverages the browser's native PDF engine, while bytes mode must render each page as a canvas.
+- `{{key}}` — HTML-escaped interpolation
+- `{{nested.path}}` — dot notation
+- `{{{rawHtml}}}` — unescaped HTML insertion
+- `{{#each items}}…{{/each}}` — loops
+- `{{this.field}}` — current item in loop
+- `{{@index}}` / `{{@index1}}` — 0-based / 1-based loop index
 
-### Optimize Table Structure
+In `headerHtml` / `footerHtml`:
+- `{{page}}`, `{{pages}}` — current and total page numbers (substituted per page by the paginator)
+- `{{date}}`, `{{time}}`, `{{datetime}}` — current local date / time
 
-```html
-<!-- Good: thead repeats on each page -->
-<table>
-  <thead>
-    <tr>
-      <th>Header</th>
-    </tr>
-  </thead>
-  <tbody>
-    {{#each rows}}
-    <tr>
-      <td>{{this.value}}</td>
-    </tr>
-    {{/each}}
-  </tbody>
-</table>
+## Page breaks
+
+Use CSS directly — the custom paginator honours `page-break-*` properties:
+
+```css
+.no-break       { page-break-inside: avoid; break-inside: avoid; }
+.page-break     { page-break-after: always; break-after: page; }
+.keep-with-next { page-break-after: avoid; break-after: avoid; }
 ```
 
-### Intelligent Page Breaks (Bytes Mode)
+(The `pageBreakModes` option from v2 is deprecated and inert.)
 
-When using `PdfOutput.bytes` with html2pdf.js, the package respects CSS page-break properties:
-
-```html
-<!-- Force page break after a section -->
-<div class="page-break"></div>
-
-<!-- Force page break before a section -->
-<div class="page-break-before">New Chapter</div>
-
-<!-- Keep content together (avoid breaking inside) -->
-<div class="no-break">
-  <h2>Section Title</h2>
-  <p>This content stays together</p>
-</div>
-
-<!-- Keep heading with following content -->
-<h2 class="keep-with-next">Important Section</h2>
-<p>This paragraph stays with the heading above</p>
-```
-
-You can also use CSS page-break properties directly:
-
-```html
-<style>
-  .card {
-    page-break-inside: avoid;  /* Don't break inside cards */
-  }
-  
-  .chapter {
-    page-break-before: always; /* Start each chapter on new page */
-  }
-  
-  h2, h3 {
-    page-break-after: avoid;   /* Keep heading with content */
-  }
-  
-  p {
-    orphans: 3;                /* Minimum lines at end of page */
-    widows: 3;                 /* Minimum lines at start of page */
-  }
-</style>
-```
-
-Configure page break modes in options:
-
-```dart
-PdfOptions(
-  output: PdfOutput.bytes,
-  pageBreakModes: [
-    PageBreakMode.css,      // Respect CSS page-break properties
-    PageBreakMode.avoidAll, // Avoid breaking common elements
-    PageBreakMode.legacy,   // Legacy mode for compatibility
-  ],
-)
-```
-
-### Reduce Image Quality for Bytes Mode
-
-```dart
-PdfOptions(
-  output: PdfOutput.bytes,
-  scale: 1.0,        // Lower scale = faster (default 1.5)
-  imageQuality: 0.8, // Lower quality = smaller file
-)
-```
-
-### Pre-render Template for Multiple Outputs
-
-```dart
-// Render template once
-final renderedHtml = TemplateEngine.render(template, data);
-
-// Compose full HTML
-final fullHtml = HtmlComposer.compose(renderedHtml, options);
-
-// Generate multiple PDFs from same rendered content
-// (Avoid re-rendering template each time)
-```
-
-## Limitations
-
-1. **Web Only**: This package only works on Flutter Web. It throws `UnsupportedError` on mobile and desktop platforms.
-
-2. **External Images**: Images from external URLs may not render correctly due to CORS restrictions. Use base64-encoded images or self-hosted images when possible.
-
-3. **Custom Fonts**: Web fonts must be loaded before PDF generation. The package waits for `document.fonts.ready`, but ensure fonts are properly linked in your HTML.
-
-4. **Complex CSS**: Some advanced CSS features (flexbox with wrapping, CSS grid) may not paginate perfectly. Test your templates with large datasets.
-
-5. **JavaScript Libraries**: Bytes mode requires html2canvas and jsPDF libraries to be loaded in `index.html`.
-
-## Platform Support
-
-| Platform | Supported |
-| -------- | --------- |
-| Web      | ✅        |
-| Android  | ❌        |
-| iOS      | ❌        |
-| macOS    | ❌        |
-| Windows  | ❌        |
-| Linux    | ❌        |
-
-For native platform PDF generation, consider using:
-
-- [pdf](https://pub.dev/packages/pdf)
-- [printing](https://pub.dev/packages/printing)
-- [syncfusion_flutter_pdf](https://pub.dev/packages/syncfusion_flutter_pdf)
-
-## Error Handling
+## Error handling
 
 ```dart
 try {
-  await QuickHtmlPdf.generate(
-    htmlTemplate: template,
-    data: data,
-    options: PdfOptions(output: PdfOutput.bytes),
-  );
-} on UnsupportedError catch (e) {
-  // Platform not supported
-  print('Web only: $e');
-} on TemplateException catch (e) {
-  // Template syntax error
-  print('Template error: ${e.message}');
+  await QuickHtmlPdf.generate(...);
 } on PdfGenerationException catch (e) {
-  // PDF generation failed
-  print('PDF error: ${e.message} (phase: ${e.phase})');
+  // e.phase   — domWalking | vectorEmission | iframeCreation | …
+  // e.code    — stable machine-readable: 'no-fonts-registered',
+  //             'glyph-fallback', 'jspdf-bootstrap-failed', …
+  // e.cause   — underlying error
 }
 ```
 
-## Debug Mode
+## Architecture
 
-Enable debug logging to see timing information:
-
-```dart
-await QuickHtmlPdf.generate(
-  htmlTemplate: template,
-  data: data,
-  options: PdfOptions(debug: true),
-);
-
-// Console output:
-// [QuickHtmlPdf] Template rendered in 5ms
-// [QuickHtmlPdf] Rendered HTML size: 125.3 KB
-// [QuickHtmlPdf] HTML composed in 2ms
-// [QuickHtmlPdf] Full HTML size: 128.7 KB
-// [QuickHtmlPdf:Bytes] Page size: 210mm x 297mm
-// [QuickHtmlPdf:Bytes] Rendering 42 pages...
-// [QuickHtmlPdf:Bytes] Rendered 10/42 pages
-// ...
-// [QuickHtmlPdf] ===== Generation Complete =====
-// [QuickHtmlPdf] Total time: 3250ms
-// [QuickHtmlPdf] Output: 2.4 MB
 ```
+htmlTemplate + data
+  → TemplateEngine.render
+  → HtmlComposer.compose (page CSS only — no JS injected)
+  → IframeManager.create (off-screen iframe — not visible)
+  → wait for fonts/images
+  → CustomPaginator.paginate (measure-and-flow over the live DOM;
+                              two-phase for multi-table flex containers;
+                              builds per-page qhp-page wrappers with
+                              header/footer/watermark slots)
+  → JsLibraries.bootstrapJsPdf (lazy, once)
+  → JsPDF document + FontRegistry.register (consumer fonts)
+  → DomWalker.renderPages (vector emission with width-sanity guards
+                           and content-area clipping)
+  → JsPDF.getBlob() / getBytes()  → BlobDownloader / Uint8List
+```
+
+## Limitations (v3.0)
+
+- Web only.
+- `print` mode renders SVG; vector modes (`download`/`bytes`) currently skip `<svg>`. Use `print` mode if your template depends on SVG.
+- `background-image` data URLs only in v3.0; relative/network URLs deferred.
+- Browser fidelity gap with vector mode: the DOM walker reads browser layout coordinates, so positions are correct, but jsPDF re-renders glyphs with its own font metrics. The width-sanity check + per-word fallback handle most cases; for ASCII + Liberation Sans against Arial, drift is usually <1 % per line. CJK / complex Indic scripts may need additional font registration and per-character emission.
+
+## Bundled JS versions
+
+- jsPDF: 2.5.1
 
 ## License
 
-MIT License - see [LICENSE](LICENSE) for details.
+MIT.

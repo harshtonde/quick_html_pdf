@@ -1,121 +1,109 @@
-/// QuickHtmlPdf - Fast HTML to PDF conversion for Flutter Web.
+/// QuickHtmlPdf — fast HTML to vector PDF for Flutter Web.
 ///
-/// A high-performance Flutter Web package that converts HTML templates
-/// with dynamic data into PDFs using JavaScript interoperability.
+/// Converts HTML templates with dynamic data into PDFs via:
 ///
-/// ## Features
-///
-/// - **Fast download mode**: Uses native browser print for instant PDF generation
-/// - **Bytes mode**: Returns PDF as Uint8List for further processing
-/// - **Template engine**: Support for {{placeholders}}, loops, and raw HTML
-/// - **Print CSS**: Optimized CSS for accurate pagination
-/// - **Large documents**: Chunked rendering for 200+ page documents
+/// - **`PdfOutput.print`**    → browser's native print dialog (user picks
+///   "Save as PDF"). No JS deps invoked at runtime, no asset bootstrap.
+/// - **`PdfOutput.download`** → silent file save. Uses a custom measure-and-
+///   flow paginator + jsPDF (vendored) for vector emission, driven by a
+///   custom DOM walker.
+/// - **`PdfOutput.bytes`**    → returns `Uint8List` for upload / processing.
+///   Same pipeline as `download`; only delivery differs.
 ///
 /// ## Quick Start
 ///
 /// ```dart
 /// import 'package:quick_html_pdf/quick_html_pdf.dart';
 ///
-/// // Generate PDF and trigger download
+/// // Print mode — no setup beyond pub get.
 /// await QuickHtmlPdf.generate(
 ///   htmlTemplate: '<h1>Hello {{name}}</h1>',
 ///   data: {'name': 'World'},
-///   options: PdfOptions(output: PdfOutput.download),
+///   options: PdfOptions(output: PdfOutput.print),
 /// );
 ///
-/// // Generate PDF and get bytes
+/// // Download mode — silent save. Requires a registered font.
+/// await QuickHtmlPdf.generate(
+///   htmlTemplate: '<h1>Hello {{name}}</h1>',
+///   data: {'name': 'World'},
+///   options: PdfOptions(
+///     output: PdfOutput.download,
+///     filename: 'hello.pdf',
+///     fonts: [
+///       PdfFont(
+///         family: 'Liberation Sans',
+///         src: 'assets/fonts/LiberationSans-Regular.ttf',
+///       ),
+///     ],
+///   ),
+/// );
+///
+/// // Bytes mode — for upload / processing.
 /// final bytes = await QuickHtmlPdf.generate(
 ///   htmlTemplate: '<h1>Hello {{name}}</h1>',
 ///   data: {'name': 'World'},
-///   options: PdfOptions(output: PdfOutput.bytes),
+///   options: PdfOptions(output: PdfOutput.bytes, fonts: [/*…*/]),
 /// );
+/// // bytes is a Uint8List
 /// ```
 ///
 /// ## Template Syntax
 ///
-/// - `{{key}}` - HTML-escaped interpolation
-/// - `{{nested.path}}` - Dot notation for nested objects
-/// - `{{{rawHtml}}}` - Unescaped HTML insertion
-/// - `{{#each items}}...{{/each}}` - Loop blocks
-/// - `{{this.field}}` - Access current item in loop
-/// - `{{@index}}` - Current loop index (0-based)
+/// - `{{key}}` — HTML-escaped interpolation
+/// - `{{nested.path}}` — dot notation for nested objects
+/// - `{{{rawHtml}}}` — unescaped HTML insertion
+/// - `{{#each items}}…{{/each}}` — loop blocks
+/// - `{{this.field}}` — current item in loop
+/// - `{{@index}}` — 0-based loop index
+///
+/// In header/footer:
+/// - `{{page}}`, `{{pages}}` — current and total page numbers
+/// - `{{date}}`, `{{time}}`, `{{datetime}}` — current local date/time
+///
+/// ## Custom Fonts (required for vector modes)
+///
+/// `PdfOutput.download` and `PdfOutput.bytes` require at least one font
+/// registered via `PdfOptions.fonts`. Without a registered font, the
+/// renderer throws `PdfGenerationException(code: 'no-fonts-registered')`.
+///
+/// `PdfOutput.print` does not require font registration — it uses the
+/// browser's native print engine which has access to system fonts.
 ///
 /// ## Platform Support
 ///
-/// This package is **web-only**. It throws `UnsupportedError` on
-/// mobile and desktop platforms.
+/// Web only. Throws `UnsupportedError` on mobile and desktop.
 library;
 
 import 'dart:typed_data';
 
 import 'src/options.dart';
 
-// Conditional imports for platform-specific implementation
+// Conditional imports for platform-specific implementation.
 import 'src/stub/quick_html_pdf_stub.dart'
-    if (dart.library.js_interop) 'src/web/quick_html_pdf_web.dart'
-    as platform;
+    if (dart.library.js_interop) 'src/web/quick_html_pdf_web.dart' as platform;
 
-// Export all public types
+// Export public types.
 export 'src/options.dart';
 export 'src/exceptions.dart';
 export 'src/templating.dart' show TemplateEngine;
 export 'src/html_composer.dart' show HtmlComposer;
 
-/// QuickHtmlPdf - Fast HTML to PDF conversion for Flutter Web.
-///
-/// This is the main entry point for the package. Use the static
-/// [generate] method to create PDFs from HTML templates.
 class QuickHtmlPdf {
-  QuickHtmlPdf._(); // Private constructor to prevent instantiation
+  QuickHtmlPdf._();
 
   /// Generate a PDF from an HTML template with dynamic data.
   ///
-  /// [htmlTemplate] - HTML template string with {{placeholders}}
-  /// [data] - Map of dynamic data to inject into the template
-  /// [options] - PDF generation options (page format, margins, output mode, etc.)
-  ///
   /// Returns:
   /// - `Uint8List` when `options.output == PdfOutput.bytes`
-  /// - `null` when `options.output == PdfOutput.download` (triggers browser download)
+  /// - `null` when `options.output` is `print` or `download` (side-effect: dialog or file save)
   ///
   /// Throws:
   /// - `UnsupportedError` on non-web platforms
   /// - `TemplateException` for invalid template syntax
-  /// - `PdfGenerationException` for PDF generation failures
+  /// - `PdfGenerationException` for PDF generation failures (carries `phase`
+  ///   and stable `code` for telemetry / consumer branching)
   ///
-  /// ## Example
-  ///
-  /// ```dart
-  /// // Simple template
-  /// final bytes = await QuickHtmlPdf.generate(
-  ///   htmlTemplate: '<h1>Invoice #{{invoiceNumber}}</h1>',
-  ///   data: {'invoiceNumber': '12345'},
-  /// );
-  ///
-  /// // With loops
-  /// final template = '''
-  ///   <table>
-  ///     <tr><th>Item</th><th>Price</th></tr>
-  ///     {{#each items}}
-  ///     <tr><td>{{this.name}}</td><td>{{this.price}}</td></tr>
-  ///     {{/each}}
-  ///   </table>
-  /// ''';
-  ///
-  /// await QuickHtmlPdf.generate(
-  ///   htmlTemplate: template,
-  ///   data: {
-  ///     'items': [
-  ///       {'name': 'Widget', 'price': '\$10'},
-  ///       {'name': 'Gadget', 'price': '\$20'},
-  ///     ],
-  ///   },
-  ///   options: PdfOptions(
-  ///     output: PdfOutput.download,
-  ///     filename: 'invoice.pdf',
-  ///   ),
-  /// );
-  /// ```
+  /// See library-level docs for examples and API contract.
   static Future<Uint8List?> generate({
     required String htmlTemplate,
     required Map<String, dynamic> data,
@@ -128,33 +116,10 @@ class QuickHtmlPdf {
     );
   }
 
-  /// Download PDF bytes as a file in the browser.
-  ///
-  /// Use this when you already have PDF bytes and want to trigger
-  /// a browser download.
-  ///
-  /// [bytes] - The PDF content as bytes
-  /// [filename] - The filename for the download (should end with .pdf)
-  ///
-  /// Throws:
-  /// - `UnsupportedError` on non-web platforms
-  ///
-  /// ## Example
-  ///
-  /// ```dart
-  /// final bytes = await QuickHtmlPdf.generate(
-  ///   htmlTemplate: '<h1>Report</h1>',
-  ///   data: {},
-  ///   options: PdfOptions(output: PdfOutput.bytes),
-  /// );
-  ///
-  /// if (bytes != null) {
-  ///   QuickHtmlPdf.downloadBytes(
-  ///     bytes: bytes,
-  ///     filename: 'report.pdf',
-  ///   );
-  /// }
-  /// ```
+  /// Trigger a browser download of an existing `Uint8List`. Use this when
+  /// the bytes came from elsewhere (e.g. a server-rendered PDF). For new
+  /// code that just wants to render-and-save, prefer
+  /// `PdfOutput.download` in [generate].
   static void downloadBytes({
     required Uint8List bytes,
     required String filename,
