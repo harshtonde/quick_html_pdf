@@ -1,5 +1,19 @@
 # Changelog
 
+## 3.1.0
+
+### New
+
+- **`border-radius` support in the vector pipeline** (`PdfOutput.download` / `PdfOutput.bytes`). Previously dropped — flat `pdf.rect` + four straight `pdf.line` calls ignored CSS rounding. Backgrounds and borders are now emitted via jsPDF's `roundedRect` when the element has a non-zero radius. Print mode was unaffected and remains unchanged.
+- **`JsPDF.roundedRect(x, y, w, h, rx, ry, {style})`** bridged in `js_interop.dart`.
+
+### Scope and limits
+
+- Only **uniform 4-corner radii** are honored. If `border-top-left-radius`, `border-top-right-radius`, `border-bottom-right-radius`, and `border-bottom-left-radius` are not all identical (e.g. `border-radius: 6px 0 6px 0`), the element renders with sharp corners. A one-time debug log is emitted per distinct non-uniform combination so the consumer can spot it.
+- Elliptical radii (different rx and ry) are supported when applied uniformly across all four corners.
+- Border rounding requires all four sides to share the same width, style, and color. Mixed-side borders fall back to the existing per-side straight-line path (radius is dropped in that case).
+- Radii are clamped to `min(w/2, h/2)` since jsPDF does not auto-clamp like CSS does.
+
 ## 3.0.0
 
 Production-grade vector PDF pipeline. Replaces the v2 raster (html2pdf/html2canvas) bytes path. Three output modes with consistent layout. No CDN at runtime.

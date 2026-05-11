@@ -106,6 +106,17 @@ extension JsPDFExtension on JsPDF {
     JSString? style,
   ]);
 
+  @JS('roundedRect')
+  external void _roundedRect(
+    JSNumber x,
+    JSNumber y,
+    JSNumber w,
+    JSNumber h,
+    JSNumber rx,
+    JSNumber ry, [
+    JSString? style,
+  ]);
+
   @JS('setFont')
   external void _setFont(JSString fontName, [JSString? fontStyle]);
 
@@ -272,6 +283,21 @@ extension JsPDFExtension on JsPDF {
   /// `'FD'` (both).
   void rect(double x, double y, double w, double h, {String style = 'S'}) {
     _rect(x.toJS, y.toJS, w.toJS, h.toJS, style.toJS);
+  }
+
+  /// Draw a rounded rectangle. [rx] / [ry] are the horizontal / vertical
+  /// corner radii in document units. [style] follows the same convention as
+  /// [rect]: `'S'` (stroke), `'F'` (fill), or `'FD'` (both).
+  void roundedRect(
+    double x,
+    double y,
+    double w,
+    double h,
+    double rx,
+    double ry, {
+    String style = 'S',
+  }) {
+    _roundedRect(x.toJS, y.toJS, w.toJS, h.toJS, rx.toJS, ry.toJS, style.toJS);
   }
 
   void setFont(String fontName, [String? fontStyle]) {

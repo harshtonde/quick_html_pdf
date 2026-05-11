@@ -211,11 +211,20 @@ class DomWalker {
     final w = rect.width * _pxToPt;
     final h = rect.height * _pxToPt;
 
+    // Resolve uniform border-radius. Non-uniform corners fall back to (0, 0)
+    // (sharp rect) — see _resolveUniformRadius.
+    final radius = _resolveUniformRadius(style, w, h);
+    final hasRadius = radius.rx > 0 && radius.ry > 0;
+
     // Background color first (under bg-image).
     final bg = _parseColor(style.backgroundColor);
     if (bg != null && bg.alpha > 0) {
       pdf.setFillColor(bg.r, bg.g, bg.b);
-      pdf.rect(x, y, w, h, style: 'F');
+      if (hasRadius) {
+        pdf.roundedRect(x, y, w, h, radius.rx, radius.ry, style: 'F');
+      } else {
+        pdf.rect(x, y, w, h, style: 'F');
+      }
     }
 
     // Background image (Form 26AS watermark).
@@ -224,11 +233,120 @@ class DomWalker {
       _emitBackgroundImage(el, style, rect, pageRect, bgImage);
     }
 
-    // Borders. Each side independent so styles can differ.
-    _emitBorderSide(el, style, rect, pageRect, _BorderSide.top);
-    _emitBorderSide(el, style, rect, pageRect, _BorderSide.right);
-    _emitBorderSide(el, style, rect, pageRect, _BorderSide.bottom);
-    _emitBorderSide(el, style, rect, pageRect, _BorderSide.left);
+    // Borders. When the box is rounded AND all four sides share the same
+    // width/style/color, emit a single rounded stroke. Otherwise fall back
+    // to four straight side-strokes — radius is dropped in that case (see
+    // _resolveUniformRadius for the policy).
+    if (hasRadius && _hasUniformBorder(style)) {
+      _emitUniformRoundedBorder(style, x, y, w, h, radius.rx, radius.ry);
+    } else {
+      _emitBorderSide(el, style, rect, pageRect, _BorderSide.top);
+      _emitBorderSide(el, style, rect, pageRect, _BorderSide.right);
+      _emitBorderSide(el, style, rect, pageRect, _BorderSide.bottom);
+      _emitBorderSide(el, style, rect, pageRect, _BorderSide.left);
+    }
+  }
+
+  /// Set of non-uniform border-radius signatures already warned about, so we
+  /// only log once per distinct combination per render.
+  final Set<String> _nonUniformRadiusReported = <String>{};
+
+  /// Resolve a single (rx, ry) pair in pt — used for both the fill and the
+  /// stroke. v3.1 only supports uniform 4-corner radii. Non-uniform input
+  /// (different per corner) falls back to (0, 0) rather than silently
+  /// flattening to one corner's value.
+  ///
+  /// Sizes are in pt (already multiplied by `_pxToPt`); we clamp rx ≤ w/2
+  /// and ry ≤ h/2 since jsPDF does not auto-clamp like CSS does.
+  ({double rx, double ry}) _resolveUniformRadius(
+    web.CSSStyleDeclaration style,
+    double wPt,
+    double hPt,
+  ) {
+    final tl = _parseCornerRadius(
+        style.getPropertyValue('border-top-left-radius'));
+    final tr = _parseCornerRadius(
+        style.getPropertyValue('border-top-right-radius'));
+    final br = _parseCornerRadius(
+        style.getPropertyValue('border-bottom-right-radius'));
+    final bl = _parseCornerRadius(
+        style.getPropertyValue('border-bottom-left-radius'));
+
+    // No radius requested anywhere — common case, skip uniformity check.
+    if (tl.rx == 0 &&
+        tr.rx == 0 &&
+        br.rx == 0 &&
+        bl.rx == 0 &&
+        tl.ry == 0 &&
+        tr.ry == 0 &&
+        br.ry == 0 &&
+        bl.ry == 0) {
+      return (rx: 0, ry: 0);
+    }
+
+    final uniform = tl.rx == tr.rx &&
+        tr.rx == br.rx &&
+        br.rx == bl.rx &&
+        tl.ry == tr.ry &&
+        tr.ry == br.ry &&
+        br.ry == bl.ry;
+
+    if (!uniform) {
+      if (debug) {
+        final sig = '${tl.rx},${tl.ry}|${tr.rx},${tr.ry}|'
+            '${br.rx},${br.ry}|${bl.rx},${bl.ry}';
+        if (_nonUniformRadiusReported.add(sig)) {
+          _log('Non-uniform border-radius ($sig) is not supported in '
+              'vector mode; element renders with sharp corners. v3.1 '
+              'supports only uniform 4-corner radii.');
+        }
+      }
+      return (rx: 0, ry: 0);
+    }
+
+    var rxPt = tl.rx * _pxToPt;
+    var ryPt = tl.ry * _pxToPt;
+    if (rxPt > wPt / 2) rxPt = wPt / 2;
+    if (ryPt > hPt / 2) ryPt = hPt / 2;
+    return (rx: rxPt, ry: ryPt);
+  }
+
+  /// Are all four border sides identical in width, style, and color?
+  /// Compares computed-style strings; same normalization on both sides.
+  bool _hasUniformBorder(web.CSSStyleDeclaration style) {
+    final w = style.borderTopWidth;
+    final s = style.borderTopStyle;
+    final c = style.borderTopColor;
+    return w == style.borderRightWidth &&
+        w == style.borderBottomWidth &&
+        w == style.borderLeftWidth &&
+        s == style.borderRightStyle &&
+        s == style.borderBottomStyle &&
+        s == style.borderLeftStyle &&
+        c == style.borderRightColor &&
+        c == style.borderBottomColor &&
+        c == style.borderLeftColor;
+  }
+
+  /// Emit a single rounded-rect stroke for the four (uniform) sides.
+  void _emitUniformRoundedBorder(
+    web.CSSStyleDeclaration style,
+    double x,
+    double y,
+    double w,
+    double h,
+    double rxPt,
+    double ryPt,
+  ) {
+    final widthPx = _parsePxLength(style.borderTopWidth);
+    if (widthPx <= 0) return;
+    final styleCss = style.borderTopStyle;
+    if (styleCss.isEmpty || styleCss == 'none' || styleCss == 'hidden') return;
+
+    final color = _parseColor(style.borderTopColor) ?? const _Rgb(0, 0, 0);
+    pdf.setDrawColor(color.r, color.g, color.b);
+    pdf.setLineWidth(widthPx * _pxToPt);
+    pdf.roundedRect(x, y, w, h, rxPt, ryPt, style: 'S');
   }
 
   void _emitBorderSide(
@@ -1052,6 +1170,19 @@ double _parsePxLength(String css) {
     return pt / _pxToPt;
   }
   return double.tryParse(trimmed) ?? 0;
+}
+
+/// Parse the computed value of a single corner longhand
+/// (`border-top-left-radius` etc). Computed style returns either one length
+/// (circular) or two (elliptical: `'<rx> <ry>'`). Always in px once resolved
+/// by the browser, so [_parsePxLength] handles unit conversion.
+({double rx, double ry}) _parseCornerRadius(String css) {
+  if (css.isEmpty) return (rx: 0, ry: 0);
+  final parts = css.trim().split(RegExp(r'\s+'));
+  if (parts.isEmpty) return (rx: 0, ry: 0);
+  final rx = _parsePxLength(parts[0]);
+  final ry = parts.length > 1 ? _parsePxLength(parts[1]) : rx;
+  return (rx: rx, ry: ry);
 }
 
 enum _BorderSide { top, right, bottom, left }
